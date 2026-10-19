@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -107,10 +108,10 @@ func TestDeepSeekAnthropicToolTurnsGetThinking(t *testing.T) {
 		}
 		ms := sentAnthropicMessages(t, f.got)
 		sameJSON(t, ms[0], `{"role":"user","content":"fix the login bug"}`)
-		sameJSON(t, ms[1], `{"role":"assistant","content":[{"type":"thinking","thinking":" "},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}`)
+		sameJSON(t, ms[1], `{"role":"assistant","content":[{"type":"thinking","thinking":" ","signature":""},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}`)
 		sameJSON(t, ms[3], `{"role":"assistant","content":[{"type":"thinking","thinking":"Read main.go.","signature":"EqQBCkgIBxABGAIiQL"},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"cat main.go"}}]}`)
-		sameJSON(t, ms[5], `{"role":"assistant","content":[{"type":"thinking","thinking":" "},{"type":"text","text":"Checking the test."},{"type":"tool_use","id":"toolu_3","name":"Bash","input":{"command":"go test"}}]}`)
-		sameJSON(t, ms[7], `{"role":"assistant","content":[{"type":"thinking","thinking":" "},{"type":"thinking","thinking":"Fine.","signature":"EqQBCkgIBxAB"},{"type":"text","text":"It passes."}]}`)
+		sameJSON(t, ms[5], `{"role":"assistant","content":[{"type":"thinking","thinking":" ","signature":""},{"type":"text","text":"Checking the test."},{"type":"tool_use","id":"toolu_3","name":"Bash","input":{"command":"go test"}}]}`)
+		sameJSON(t, ms[7], `{"role":"assistant","content":[{"type":"thinking","thinking":" ","signature":""},{"type":"thinking","thinking":"Fine.","signature":"EqQBCkgIBxAB"},{"type":"text","text":"It passes."}]}`)
 	}
 
 	// another vendor's model, and a Claude model, on the same upstream are
@@ -140,8 +141,86 @@ func TestDeepSeekAnthropicNoThinkingField(t *testing.T) {
 	if code, b := postTo(t, New(), "/v1/messages", body); code != 200 {
 		t.Fatalf("%d: %s", code, b)
 	}
-	if ms := sentAnthropicMessages(t, f.got); !strings.HasPrefix(string(ms[1]), `{"content":[{"type":"thinking","thinking":" "}`) {
+	if ms := sentAnthropicMessages(t, f.got); !strings.HasPrefix(string(ms[1]), `{"content":[{"type":"thinking","thinking":" ","signature":""}`) {
 		t.Errorf("first tool turn sent as %s", ms[1])
+	}
+}
+
+// openRouterRefuseAnthropic answers as OpenRouter's /api/v1/messages did
+// for a DeepSeek model in #2883: its request schema wants a thinking
+// block's signature as a string, so one with no signature is "Invalid
+// Anthropic Messages API request" (400), its metadata naming the block's
+// missing signature. The fields are the ones the report quotes. Behind
+// it, the model still wants a thinking block on each tool turn
+// (deepseekRefuseAnthropic).
+func openRouterRefuseAnthropic(body []byte) (int, string) {
+	if code, msg := deepseekRefuseAnthropic(body); code != 0 {
+		return code, msg
+	}
+	var q struct {
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	json.Unmarshal(body, &q)
+	for i, m := range q.Messages {
+		var blocks []map[string]json.RawMessage
+		json.Unmarshal(m.Content, &blocks)
+		for j, b := range blocks {
+			var kind, sig string
+			json.Unmarshal(b["type"], &kind)
+			if kind != "thinking" {
+				continue
+			}
+			if raw, ok := b["signature"]; ok && json.Unmarshal(raw, &sig) == nil {
+				continue
+			}
+			return 400, fmt.Sprintf(`{"error":{"message":"Invalid Anthropic Messages API request","code":400,"metadata":{"raw":[{"path":["messages",%d,"content"],"errors":[[],[{"path":[%d,"signature"],"expected":"string","code":"invalid_type","message":"Invalid input: expected string, received undefined"}]]}]}}}`, i, j)
+		}
+	}
+	return 0, ""
+}
+
+// A DeepSeek model on OpenRouter's Anthropic endpoint (#2883): the
+// thinking block a tool turn is given (a space, or the client's unsigned
+// reasoning) goes with an empty signature, which OpenRouter's schema
+// takes where it turns a missing one away. Both ways in are held to it:
+// Claude Desktop's Messages request relayed as it came, and a Chat
+// client's translated.
+func TestOpenRouterDeepSeekThinkingHasASignature(t *testing.T) {
+	f := &fake{t: t, ctype: "application/json", reply: anthropicWholeOK, refuse: openRouterRefuseAnthropic}
+	up := setup(t, provider.Anthropic, f)
+	if err := provider.Save(provider.Provider{ID: "openrouter", Name: "OpenRouter", Key: "k", Models: []string{"deepseek/deepseek-v4.1-flash-1017"}, Anthropic: up.URL}); err != nil {
+		t.Fatal(err)
+	}
+	srv := New()
+	code, body := postTo(t, srv, "/v1/messages", strings.Replace(claudeTurnsForDeepSeek, "%s", "openrouter/deepseek/deepseek-v4.1-flash-1017", 1))
+	if code != 200 || f.calls != 1 {
+		t.Fatalf("messages: %d after %d calls: %s", code, f.calls, body)
+	}
+	ms := sentAnthropicMessages(t, f.got)
+	sameJSON(t, ms[1], `{"role":"assistant","content":[{"type":"thinking","thinking":" ","signature":""},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}`)
+	sameJSON(t, ms[3], `{"role":"assistant","content":[{"type":"thinking","thinking":"Read main.go.","signature":"EqQBCkgIBxABGAIiQL"},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"cat main.go"}}]}`)
+
+	// a Chat client's request goes on as a stream
+	f.calls, f.ctype, f.reply = 0, "", sse(
+		`event: message_start`+"\n"+`data: {"type":"message_start","message":{"id":"msg_1","model":"m1","usage":{"input_tokens":7}}}`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"12:01"}}`,
+		`data: {"type":"content_block_stop","index":0}`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}`,
+		`data: {"type":"message_stop"}`)
+	chat := `{"model":"openrouter/deepseek/deepseek-v4.1-flash-1017","stream":false,"tools":[{"type":"function","function":{"name":"get_time","parameters":{"type":"object","properties":{}}}}],"messages":[
+		{"role":"user","content":"what time is it? twice"},
+		{"role":"assistant","content":null,"tool_calls":[` + timeCall + `]},
+		{"role":"tool","tool_call_id":"call_1","content":"12:00"},
+		{"role":"assistant","content":null,"tool_calls":[{"id":"call_2","type":"function","function":{"name":"get_time","arguments":"{}"}}],"reasoning_content":"Once more."},
+		{"role":"tool","tool_call_id":"call_2","content":"12:01"}]}`
+	if code, body := postTo(t, srv, "/v1/chat/completions", chat); code != 200 || f.calls != 1 {
+		t.Fatalf("chat: %d after %d calls: %s", code, f.calls, body)
+	}
+	if !strings.Contains(string(f.got), `{"type":"thinking","thinking":"Once more.","signature":""}`) {
+		t.Errorf("the client's reasoning went without a signature: %s", f.got)
 	}
 }
 

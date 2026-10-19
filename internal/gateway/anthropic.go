@@ -63,10 +63,15 @@ func (b aBlock) MarshalJSON() ([]byte, error) {
 	if b.Type != "thinking" {
 		return json.Marshal(plain(b))
 	}
+	// a thinking block always says its signature, empty for one magpie
+	// sends unsigned (noReasoning, or a turn's thinking replayed): the
+	// Messages API schema has it as a string, and OpenRouter's endpoint
+	// turns a block without one away (#2883)
 	return json.Marshal(struct {
 		plain
-		Thinking string `json:"thinking"`
-	}{plain(b), b.Thinking})
+		Thinking  string `json:"thinking"`
+		Signature string `json:"signature"`
+	}{plain(b), b.Thinking, b.Signature})
 }
 
 // ephemeral marks a prompt-cache breakpoint.

@@ -87,14 +87,14 @@ func TestHermesUnreadFingerprintsParseAgain(t *testing.T) {
 	s := state{Mod: f.mod.UnixNano(), DBRevision: ""}
 	cache = map[string]*state{f.path: &s}
 	t.Cleanup(func() { cache = nil })
-	parsed := 0
-	parseHook = func() { parsed++ }
+	var parsed atomic.Int32
+	parseHook = func() { parsed.Add(1) }
 	t.Cleanup(func() { parseHook = nil })
 	mu.Lock()
 	refresh([]file{f}, nil)
 	mu.Unlock()
-	if parsed != 1 {
-		t.Fatalf("an unknown fingerprint reused a parse (%d parsed)", parsed)
+	if n := parsed.Load(); n != 1 {
+		t.Fatalf("an unknown fingerprint reused a parse (%d parsed)", n)
 	}
 }
 

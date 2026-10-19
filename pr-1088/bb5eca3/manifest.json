@@ -1,0 +1,29 @@
+{
+  "summary": "Agent 页新增 OpenClaw：使用官方彩色图标，未安装时出现在「安装其他 Agent」里并提供官方安装脚本；接入后在 Agent 详情中以内联的「配置模型」编辑主模型和有序降级模型，整条模型链原子保存，失败保留原值。同时修正了选择器在对话框内的挂载与 Esc 关闭，以及有降级模型时选原生模型不会断开 magpie。",
+  "scenes": [
+    {
+      "title": "OpenClaw 的安装入口",
+      "shots": [
+        {
+          "file": "01-agents-install-collapsed.png",
+          "caption": "Agent 页底部折叠状态的「安装其他 Agent」",
+          "width": 2560
+        },
+        {
+          "file": "02-agents-install-openclaw.png",
+          "caption": "安装列表中的 OpenClaw 一行与它的安装命令",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙盒里的 OpenClaw 既没有配置也没有 CLI，因此看不到它在 Agent 列表中的行、展开后的「配置模型」（主模型 + 降级模型、上移/移除/添加）以及接入与断开；只能看到未安装时的安装入口。JSON5 备份与逐字节还原、`$include` 和只读/Nix 配置被拒绝写入、同步保留反向代理地址等只有后端行为与提示文案，也无对应数据可展示。",
+  "interactive": true,
+  "pages": 1
+}

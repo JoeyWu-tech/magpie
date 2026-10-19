@@ -1,6 +1,8 @@
 package sessions
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -51,5 +53,54 @@ func TestCodeBuddyGatewayIsItsOwn(t *testing.T) {
 	}
 	if workbuddyGateway("custom-local:deepseek/pro") {
 		t.Fatal("CodeBuddy's models.json was read for WorkBuddy")
+	}
+}
+
+// CodeBuddy Code told to keep its files in WorkBuddy's folder
+// (CODEBUDDY_CONFIG_DIR=~/.workbuddy, TimWongUp's .zshrc in #2932) leaves
+// one folder for both: its sessions are read once, as WorkBuddy's, on the
+// Sessions page and in usage alike, and the folder is named once. Read as
+// both, each was listed twice, its calls went to CodeBuddy Code, and a
+// refresh took each path twice and closed a nil channel.
+func TestCodeBuddyInWorkBuddysFolderIsReadOnce(t *testing.T) {
+	for _, how := range []string{"named", "linked"} {
+		t.Run(how, func(t *testing.T) {
+			inZone(t, 0)
+			home := setupAgents(t)
+			dir := filepath.Join(home, ".workbuddy")
+			if how == "linked" {
+				dir = filepath.Join(home, "buddy-link")
+				if err := os.Symlink(filepath.Join(home, ".workbuddy"), dir); err != nil {
+					t.Skip("no symlinks here:", err)
+				}
+			}
+			t.Setenv("CODEBUDDY_CONFIG_DIR", dir)
+			ss := List(0)
+			if w, c := count(ss, "workbuddy"), count(ss, "codebuddy"); w != 3 || c != 0 {
+				t.Fatalf("listed %d WorkBuddy and %d CodeBuddy Code sessions, want 3 and 0", w, c)
+			}
+			n := map[string]int{}
+			for _, c := range Calls(time.Time{}) {
+				n[c.Agent]++
+			}
+			// TestWorkBuddyCalls' six, each once
+			if n["workbuddy"] != 6 || n["codebuddy"] != 0 {
+				t.Fatalf("calls %v, want WorkBuddy's 6 and no CodeBuddy Code's", n)
+			}
+			for _, s := range StatsFor(0).Sessions {
+				if s.Agent == "codebuddy" {
+					t.Fatalf("stats counted a WorkBuddy session as CodeBuddy Code's too: %s", s.Key)
+				}
+			}
+			named := 0
+			for _, d := range Dirs() {
+				if sameFolder(d, filepath.Join(home, ".workbuddy")) {
+					named++
+				}
+			}
+			if named != 1 {
+				t.Fatalf("WorkBuddy's folder named %d times in %v", named, Dirs())
+			}
+		})
 	}
 }

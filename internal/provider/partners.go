@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -68,9 +69,17 @@ type partnerFeed struct {
 // partner ever listed, so a provider added from one that has since left
 // still finds its preset (its endpoints, regions and key page).
 type partnerCache struct {
-	At       time.Time          `json:"at"`
-	Partners []Partner          `json:"partners"`
-	Seen     map[string]Partner `json:"seen,omitempty"`
+	At       time.Time `json:"at"`
+	Partners []Partner `json:"partners"`
+	// Tried is when the last fetch started, and Error how it ended, ""
+	// once it got the list (At is then its time) or while it is still
+	// out. So the file tells a fetch that failed (Error) from one that
+	// never came back (Tried after At, no Error) and from none asked
+	// (Tried old): an app that kept an old list for days left nothing to
+	// tell them apart (#3362).
+	Tried time.Time          `json:"tried,omitzero"`
+	Error string             `json:"error,omitempty"`
+	Seen  map[string]Partner `json:"seen,omitempty"`
 	// Noticed are the partners the add sheet has listed to the user; one
 	// listed since is new, and the add button says so (NoticePartners).
 	Noticed []string `json:"noticed,omitempty"`
@@ -81,6 +90,7 @@ var (
 	partnerState   *partnerCache // nil until read from disk
 	partnerNext    time.Time     // the next fetch, when none is running
 	partnerFetches bool
+	partnerLogged  string // the failure logged last, so a long one is logged once
 )
 
 // A list is fetched again after partnerEvery, so a partner added reaches
@@ -227,11 +237,19 @@ func loadPartners() {
 }
 
 // refreshPartners fetches the list and keeps it; on a failure the list
-// held stays, and it is tried again in ten minutes.
+// held stays, and it is tried again in ten minutes. When it started and
+// how it ended are kept with the list (Tried, Error), and a failure is
+// logged once until the list is fetched again.
 func refreshPartners() {
+	partnerMu.Lock()
+	loadPartners()
+	partnerState.Tried, partnerState.Error = time.Now(), ""
+	savePartners()
+	partnerMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	list, err := fetchPartners(ctx, partnersSource())
+	src := partnersSource()
+	list, err := fetchPartners(ctx, src)
 	if err == nil {
 		for i := range list {
 			list[i].Icon = partnerIcon(ctx, list[i])
@@ -243,7 +261,17 @@ func refreshPartners() {
 	loadPartners()
 	if err != nil {
 		partnerNext = time.Now().Add(partnerRetry)
+		partnerState.Error = partnerError(err)
+		savePartners()
+		if partnerState.Error != partnerLogged {
+			partnerLogged = partnerState.Error
+			log.Printf("partners: the list couldn't be fetched from %s, asked again in %s: %s", src, partnerRetry, partnerLogged)
+		}
 		return
+	}
+	if partnerLogged != "" {
+		partnerLogged = ""
+		log.Printf("partners: the list is fetched again from %s", src)
 	}
 	now := time.Now()
 	partnerState.At, partnerState.Partners = now, list
@@ -252,6 +280,16 @@ func refreshPartners() {
 	}
 	partnerNext = now.Add(partnerEvery)
 	savePartners()
+}
+
+// partnerError is err as the list keeps it: its text, cut to a size
+// that stays readable in the file.
+func partnerError(err error) string {
+	msg := strings.Join(strings.Fields(err.Error()), " ")
+	if r := []rune(msg); len(r) > 500 {
+		msg = string(r[:500]) + "…"
+	}
+	return msg
 }
 
 // savePartners writes what is held to disk; partnerMu held.
@@ -446,7 +484,7 @@ func partnerPreset(id string) *PresetDef {
 // so it is waited for first.
 func resetPartners() {
 	claimPartnerFetch()
-	partnerState, partnerNext, partnerFetches = nil, time.Time{}, false
+	partnerState, partnerNext, partnerFetches, partnerLogged = nil, time.Time{}, false, ""
 	partnerMu.Unlock()
 }
 

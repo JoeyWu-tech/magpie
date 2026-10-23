@@ -1,8 +1,10 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -440,4 +442,106 @@ func TestPartnersKeptFreshUnasked(t *testing.T) {
 		defer partnerMu.Unlock()
 		return partnerState != nil && partnerIDs(partnerState.Partners) == "acme"
 	})
+}
+
+// partners.json says when the list was last tried and how that ended. An
+// app that kept a list from 10-20 for three days left a file that
+// couldn't tell a fetch failing every time from one that never came back,
+// or from none asked (#3362). Now a failure keeps its error until a fetch
+// gets the list, a fetch still out shows as a try after the list's time
+// with no error, and a failure is logged once, however often it is
+// tried again.
+func TestPartnersKeepTheirLastTry(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	resetPartners()
+	t.Cleanup(resetPartners)
+	var logged bytes.Buffer
+	was := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(was) })
+	var fail, hold atomic.Bool
+	fail.Store(true)
+	var asked atomic.Int32
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		asked.Add(1)
+		if hold.Load() {
+			<-release
+		}
+		if fail.Load() {
+			http.Error(rw, "down for maintenance", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = rw.Write([]byte(`{"partners":[{"id":"acme","name":"Acme","chat":"https://a.example/v1"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	// runs before srv.Close, which waits for a held fetch (#1808)
+	let := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(let)
+	t.Setenv("MAGPIE_PARTNERS", srv.URL)
+
+	// what the file says, read as written, not through partnerCache
+	type kept struct {
+		at, tried time.Time
+		err       string
+		partners  string
+	}
+	read := func() kept {
+		t.Helper()
+		b, err := os.ReadFile(partnerCacheFile())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(b, &raw); err != nil {
+			t.Fatal(err)
+		}
+		var k kept
+		_ = json.Unmarshal(raw["at"], &k.at)
+		_ = json.Unmarshal(raw["tried"], &k.tried)
+		_ = json.Unmarshal(raw["error"], &k.err)
+		var ps []Partner
+		_ = json.Unmarshal(raw["partners"], &ps)
+		k.partners = partnerIDs(ps)
+		return k
+	}
+
+	start := time.Now()
+	fetchPartnersNow()
+	k := read()
+	if k.tried.Before(start) || !strings.Contains(k.err, "503") || !k.at.IsZero() {
+		t.Fatalf("after a failed fetch the file says tried %v, error %q, at %v; want a try since %v, the 503, no list", k.tried, k.err, k.at, start)
+	}
+	fetchPartnersNow()
+	fetchPartnersNow()
+	if n := strings.Count(logged.String(), "couldn't be fetched"); n != 1 {
+		t.Fatalf("three failed fetches logged %d times, want once:\n%s", n, logged.String())
+	}
+
+	// a fetch still out: tried after the list's time, no error
+	fail.Store(false)
+	hold.Store(true)
+	before, out := asked.Load(), time.Now()
+	done := make(chan struct{})
+	go func() { fetchPartnersNow(); close(done) }()
+	for deadline := time.Now().Add(5 * time.Second); asked.Load() == before; {
+		if time.Now().After(deadline) {
+			t.Fatal("the fetch never asked")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	k = read()
+	if k.tried.Before(out) || k.err != "" || !k.at.Before(k.tried) {
+		t.Fatalf("while a fetch is out the file says tried %v, error %q, at %v; want a try since %v after the list's time, no error", k.tried, k.err, k.at, out)
+	}
+
+	let()
+	<-done
+	k = read()
+	if k.err != "" || k.at.Before(k.tried) || k.partners != "acme" {
+		t.Fatalf("after the fetch got the list the file says tried %v, error %q, at %v, partners %q", k.tried, k.err, k.at, k.partners)
+	}
+	if !strings.Contains(logged.String(), "fetched again") {
+		t.Fatalf("the list fetched again after a failure wasn't logged:\n%s", logged.String())
+	}
 }

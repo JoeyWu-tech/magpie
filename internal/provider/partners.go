@@ -418,6 +418,27 @@ func partnerIcon(ctx context.Context, p Partner) string {
 
 var fetchPartnerIcon = FetchIcon
 
+// keptPartnerIcons are the pictures the partners listed now show, which
+// pruneIcons leaves (#3424): no provider points at a partner's logo until
+// one is added from it, so the prune after any save of providers.json
+// took it once it was an hour old, and the add sheet showed the partner
+// with the generic icon until the next fetch got the logo again.
+func keptPartnerIcons() []string {
+	if partnersSource() == "off" {
+		return nil
+	}
+	partnerMu.Lock()
+	defer partnerMu.Unlock()
+	loadPartners()
+	var out []string
+	for _, p := range partnerState.Partners {
+		if name, ok := strings.CutPrefix(p.Icon, iconPrefix); ok {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // partnerPreset is the preset of a partner listed now or before, for a
 // provider added from it: one no longer listed isn't Sponsored.
 func partnerPreset(id string) *PresetDef {

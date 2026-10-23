@@ -441,3 +441,58 @@ func TestPartnersKeptFreshUnasked(t *testing.T) {
 		return partnerState != nil && partnerIDs(partnerState.Partners) == "acme"
 	})
 }
+
+// #3424: a partner's logo is no provider's icon until one is added from
+// it, and a list fetched again uses the logo kept from the same URL as it
+// is, so the file only ages. The prune after any save of providers.json
+// took it once it was an hour old: the add sheet drew the partner with
+// the generic icon, and the next fetch downloaded the logo again. It is
+// kept while the partner is listed; a picture nothing points at still
+// goes.
+func TestPartnerLogoOutlivesAProvidersSave(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	resetPartners()
+	t.Cleanup(resetPartners)
+	was := fetchPartnerIcon
+	t.Cleanup(func() { fetchPartnerIcon = was })
+	var fetched atomic.Int32
+	fetchPartnerIcon = func(context.Context, string) (string, error) {
+		fetched.Add(1)
+		return StoreIcon([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR acme's logo"))
+	}
+	var body atomic.Value
+	body.Store(`{"partners":[{"id":"acme","name":"Acme AI","chat":"https://api.acme.example/v1","iconUrl":"https://acme.example/logo.png"}]}`)
+	t.Setenv("MAGPIE_PARTNERS", partnerFeedServer(t, &body).URL)
+	fetchPartnersNow()
+	got := Partners()
+	if len(got) != 1 || !strings.HasPrefix(got[0].Icon, iconPrefix) {
+		t.Fatalf("partners = %+v", got)
+	}
+	logo := IconFile(strings.TrimPrefix(got[0].Icon, iconPrefix))
+	stray, err := StoreIcon([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR nobody's"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	strayFile := IconFile(strings.TrimPrefix(stray, iconPrefix))
+	// kept from an earlier day, and the list fetched again (a start) uses
+	// it as it is
+	old := time.Now().Add(-2 * time.Hour)
+	for _, f := range []string{logo, strayFile} {
+		if err := os.Chtimes(f, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fetchPartnersNow()
+
+	pruneIcons(file{})
+	if _, err := os.Stat(logo); err != nil {
+		t.Errorf("the listed partner's logo was pruned: %v", err)
+	}
+	if _, err := os.Stat(strayFile); err == nil {
+		t.Errorf("a picture nothing points at was kept")
+	}
+	fetchPartnersNow()
+	if n := fetched.Load(); n != 1 {
+		t.Errorf("the logo was downloaded %d times, want once", n)
+	}
+}

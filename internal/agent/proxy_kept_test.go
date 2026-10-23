@@ -283,6 +283,7 @@ func TestCodexBehindReverseProxy(t *testing.T) {
 		at++
 		db.Exec(`INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body) VALUES (?, 0, 'INFO', 'codex_api::endpoint::responses_websocket', ?)`,
 			at, "responses_websocket.connect{}: "+body)
+		forgetReached()
 	}
 	log("connecting to websocket: wss://ai.corp.example/magpie/backend-api/codex/responses")
 	if d := codex(home).Drift(); d != nil {

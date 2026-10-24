@@ -1143,7 +1143,7 @@ func wslClaudeStandIn(model string) string {
 	for _, d := range ds {
 		d.mirror(cfg)
 		path := filepath.Join(d.local(d.Home), ".claude", "settings.json")
-		if m := claudeStandInAt(path, model, d.base()); m != "" {
+		if m := claudeStandInAt(d.place("claude@wsl:"+d.Name), path, model); m != "" {
 			return m
 		}
 	}

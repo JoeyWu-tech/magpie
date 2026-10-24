@@ -915,15 +915,21 @@ func wiringOff(name, file string, get func(string) (string, bool), kvs ...string
 		if keyHolds(v, want) || v != "" && reachesMagpie(v, want) {
 			continue
 		}
-		where := name + "'s " + k + " (" + filepath.Base(file) + ")"
-		switch {
-		case v == "":
-			return where + " is gone, so it no longer reaches magpie"
-		case strings.Contains(strings.ToLower(k), "url"):
-			return where + " is " + v + ", not magpie's gateway at " + want
-		default:
-			return where + " was changed, so magpie's gateway won't take its requests"
-		}
+		return whatsOff(name, file, k, v, want)
 	}
 	return ""
+}
+
+// whatsOff is what wiringOff says of k in an agent's config, v where
+// magpie wrote want.
+func whatsOff(name, file, k, v, want string) string {
+	where := name + "'s " + k + " (" + filepath.Base(file) + ")"
+	switch {
+	case v == "":
+		return where + " is gone, so it no longer reaches magpie"
+	case strings.Contains(strings.ToLower(k), "url"):
+		return where + " is " + v + ", not magpie's gateway at " + want
+	default:
+		return where + " was changed, so magpie's gateway won't take its requests"
+	}
 }

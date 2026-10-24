@@ -612,10 +612,10 @@ func claudeIn(at place) *Agent {
 	spell := provider.ClaudeSpelled
 	model := jsonGet(path, "model")
 	// routed: on magpie's gateway, or on a proxy to it where magpie has
-	// answered (#1985), which a pick keeps (gwAt)
-	routed := func() bool { u := env("ANTHROPIC_BASE_URL"); return u == at.gw() || surelyMagpie(u, at.gw()) }
+	// answered (#1985, claudeProxied), which a pick keeps (gwAt)
+	routed := func() bool { u := env("ANTHROPIC_BASE_URL"); return u == at.gw() || claudeProxied(at, path, u) }
 	gwAt := func() string {
-		if u := env("ANTHROPIC_BASE_URL"); u != at.gw() && surelyMagpie(u, at.gw()) {
+		if u := env("ANTHROPIC_BASE_URL"); claudeProxied(at, path, u) {
 			return u
 		}
 		return at.gw()
@@ -2146,17 +2146,26 @@ func claudeIn(at place) *Agent {
 			if !isMagpie(get()) {
 				return ""
 			}
+			getEnv := func(k string) (string, bool) { return edit.GetJSON(path, "env."+k) }
+			// an address that isn't the gateway's is asked whether it is
+			// magpie behind a proxy (#1985) only while what Claude Code
+			// sends is for magpie (claudeKeyed): with a key of the user's
+			// own it is their endpoint, told as it is, never asked (#3480)
+			keyed := claudeKeyed(at, path)
 			// an administrator's settings win over the user's
 			managed := claudeManaged()
 			if at.sys != nil {
 				managed = at.sys("/etc/claude-code/managed-settings.json")
 			}
-			if u, _ := edit.GetJSON(managed, "env.ANTHROPIC_BASE_URL"); u != "" && u != at.gw() && !reachesMagpie(u, at.gw()) {
+			if u, _ := edit.GetJSON(managed, "env.ANTHROPIC_BASE_URL"); u != "" && u != at.gw() && !(keyed && reachesMagpie(u, at.gw())) {
 				return "Claude Code's managed settings (" + at.native(managed) + ") set ANTHROPIC_BASE_URL to " + u + ", which wins over magpie's"
 			}
-			getEnv := func(k string) (string, bool) { return edit.GetJSON(path, "env."+k) }
-			if off := wiringOff("Claude Code", path, getEnv, "ANTHROPIC_BASE_URL", at.gw()); off != "" {
-				return off
+			if keyed {
+				if off := wiringOff("Claude Code", path, getEnv, "ANTHROPIC_BASE_URL", at.gw()); off != "" {
+					return off
+				}
+			} else if u, _ := getEnv("ANTHROPIC_BASE_URL"); u != at.gw() {
+				return whatsOff("Claude Code", path, "ANTHROPIC_BASE_URL", u, at.gw())
 			}
 			if why := claudeCloud(at, path); why != "" {
 				return why
@@ -2627,7 +2636,7 @@ func ClassifierStandIn(agent, model string) string {
 func claudeClassifierIn(at place, model string) string {
 	path := filepath.Join(at.claudeDir(), "settings.json")
 	env := func(k string) string { v, _ := edit.GetJSON(path, "env."+k); return provider.ClaudeRead(v) }
-	if u := env("ANTHROPIC_BASE_URL"); u != at.gw() && !surelyMagpie(u, at.gw()) {
+	if u := env("ANTHROPIC_BASE_URL"); u != at.gw() && !claudeProxied(at, path, u) {
 		return ""
 	}
 	if env(claudeAutoModeEnv) != "" {
@@ -2653,13 +2662,13 @@ func claudeClassifierIn(at place, model string) string {
 	return followAt("sonnet", bare(main), effort)
 }
 
-func claudeStandIn(path, model string) string { return claudeStandInAt(path, model, gateway.URL()) }
+func claudeStandIn(path, model string) string { return claudeStandInAt(here(""), path, model) }
 
-// claudeStandInAt is claudeStandIn for a Claude Code that reaches the
-// gateway at gw.
-func claudeStandInAt(path, model, gw string) string {
+// claudeStandInAt is claudeStandIn for the Claude Code at a place, which
+// reaches the gateway at its own address.
+func claudeStandInAt(at place, path, model string) string {
 	env := func(k string) string { v, _ := edit.GetJSON(path, "env."+k); return provider.ClaudeRead(v) }
-	if u := env("ANTHROPIC_BASE_URL"); u != gw && !surelyMagpie(u, gw) {
+	if u := env("ANTHROPIC_BASE_URL"); u != at.gw() && !claudeProxied(at, path, u) {
 		return ""
 	}
 	// the model Claude Code is set to itself, by that id, is its own pick
@@ -2684,6 +2693,34 @@ func claudeStandInAt(path, model, gw string) string {
 		}
 	}
 	return main
+}
+
+// claudeKeyed says what the Claude Code at a place (its settings at path)
+// sends is for magpie: a key the gateway takes (keyHolds, as Check asks of
+// it), or none where it keeps its claude.ai sign-in through magpie, which
+// magpie set (claude.login) on a Claude Code it wired (wired_at, which
+// Disconnect forgets) where the gateway takes any key (signInHere).
+func claudeKeyed(at place, path string) bool {
+	if tok, _ := edit.GetJSON(path, "env.ANTHROPIC_AUTH_TOKEN"); tok != "" {
+		return keyHolds(tok, at.gwKey())
+	}
+	st := stashLoad()
+	return at.gwKey() == gateway.Token && st[at.key("claude.login")] == "claudeai" && st[at.key("claude"+wiredAt)] != ""
+}
+
+// claudeProxied says u, the base URL the Claude Code at a place (its
+// settings at path) has in place of the gateway's, is a proxy to it where
+// magpie has answered (#1985, surelyMagpie). It is asked only where it can
+// be another way to magpie (proxyBase), and only while Claude Code sends
+// it what is for magpie (claudeKeyed): with a key of the user's own, u is
+// their endpoint. zhangt2333 (#3480) never connected Claude Code, and the
+// Agents page's reads of it sent GET / about every 30s to the endpoint in
+// its settings.
+func claudeProxied(at place, path, u string) bool {
+	if _, ok := proxyBase(u, at.gw()); !ok || u == at.gw() {
+		return false
+	}
+	return claudeKeyed(at, path) && surelyMagpie(u, at.gw())
 }
 
 // claudeMain is the model a Claude Code routed through magpie runs on, as

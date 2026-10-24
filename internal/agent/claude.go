@@ -2023,6 +2023,14 @@ func claudeIn(at place) *Agent {
 			return claudeSignIns()
 		},
 	})
+	// a write asks a proxy in front of magpie first (claudeAsk): each
+	// field's Set, Sync and Unwire. Follow writes only once routed, so a
+	// first look there leaves it for the next one, as reads do.
+	ask := func() { claudeAsk(at, path, env("ANTHROPIC_BASE_URL")) }
+	for i := range fields {
+		s := fields[i].Set
+		fields[i].Set = func(v string) error { ask(); return s(v) }
+	}
 
 	var self *Agent
 	self = &Agent{
@@ -2035,6 +2043,7 @@ func claudeIn(at place) *Agent {
 		// installed, on Anthropic's endpoint, where this brings back the
 		// endpoint, token and model the user had
 		Unwire: func() error {
+			ask()
 			was, err := unroute()
 			if err != nil {
 				return err
@@ -2062,6 +2071,7 @@ func claudeIn(at place) *Agent {
 		// the catalog's models, with their levels, as Claude Code is told
 		// them, while magpie's are the ones it has
 		Sync: func() error {
+			ask()
 			if !routed() {
 				return desktopOnly()
 			}
@@ -2711,10 +2721,31 @@ func claudeKeyed(at place, path string) bool {
 // Agents page's reads of it sent GET / about every 30s to the endpoint in
 // its settings.
 func claudeProxied(at place, path, u string) bool {
-	if _, ok := proxyBase(u, at.gw()); !ok || u == at.gw() {
-		return false
+	_, ok := claudeProxyBase(at, path, u)
+	return ok && surelyMagpie(u, at.gw())
+}
+
+// claudeProxyBase is where claudeProxied asks whether magpie answers: u's
+// proxyBase, while Claude Code sends it what is for magpie (claudeKeyed).
+func claudeProxyBase(at place, path, u string) (string, bool) {
+	base, ok := proxyBase(u, at.gw())
+	if !ok || u == at.gw() {
+		return "", false
 	}
-	return claudeKeyed(at, path) && surelyMagpie(u, at.gw())
+	return base, claudeKeyed(at, path)
+}
+
+// claudeAsk is what each write to the Claude Code at a place does first:
+// the proxy claudeProxied would ask about is asked now where magpie hasn't
+// answered there yet (magpieAsked). Every write reads routed, and the first
+// one in a magpie just started, the CLI's, read a proxy not asked yet as
+// no: a pick wrote 127.0.0.1 over it, the sync a provider added runs
+// turned the auto mode review back on, Disconnect left magpie in and
+// forgot the endpoint the user had (#1985).
+func claudeAsk(at place, path, u string) {
+	if base, ok := claudeProxyBase(at, path, u); ok {
+		magpieAsked(base)
+	}
 }
 
 // claudeMain is the model a Claude Code routed through magpie runs on, as

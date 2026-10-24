@@ -569,3 +569,122 @@ func TestWSLClaudeOwnEndpointNeverAsked(t *testing.T) {
 	}
 	noOwnClaude(t)
 }
+
+// davisjiahao (#1985), from a magpie just started: Claude Code connected,
+// its haiku tier given a model by hand, then pointed by hand at a proxy to
+// magpie, magpie's key kept. Nothing has asked the proxy yet whether magpie
+// answers there, and a write doesn't take that for no: it asks, and waits
+// (magpieAsked). A pick keeps the proxy and the tier (it wrote 127.0.0.1
+// over the proxy and put the tier back on the main model), a Sync (a
+// provider added runs one) keeps the auto mode review off (it took it
+// out), a tier is picked (it said to pick a model through magpie first),
+// and Disconnect puts back the endpoint and key the user had before magpie
+// (it left magpie in and forgot them).
+func TestClaudeFirstWriteAsksTheProxy(t *testing.T) {
+	t.Run("nginx", func(t *testing.T) { claudeFirstWriteAsksTheProxy(t, corpProxy) })
+	t.Run("local", func(t *testing.T) { claudeFirstWriteAsksTheProxy(t, localProxy) })
+}
+
+func claudeFirstWriteAsksTheProxy(t *testing.T, proxy string) {
+	const own = "https://own.example/api"
+	behind := func(t *testing.T) (cl *Agent, env func(string) string, probed func() []string) {
+		t.Setenv("MAGPIE_ADDR", "")
+		home, path := claudeSettings(t, `{"model":"opus","env":{"ANTHROPIC_BASE_URL":"`+own+`","ANTHROPIC_AUTH_TOKEN":"sk-own"}}`)
+		if err := provider.Save(provider.Provider{ID: "fake", Name: "Fake", Key: "k", Chat: "http://127.0.0.1:1/v1", Models: []string{"m1", "m2", "m3"}}); err != nil {
+			t.Fatal(err)
+		}
+		cl = claude(home)
+		if err := cl.Apply("model", "fake/m1"); err != nil {
+			t.Fatal(err)
+		}
+		edit.SetJSON(path,
+			edit.KV{Path: "env." + tierEnv("haiku"), Value: "fake/m2"},
+			edit.KV{Path: "env.ANTHROPIC_SMALL_FAST_MODEL", Value: "fake/m2"},
+			edit.KV{Path: "env.ANTHROPIC_BASE_URL", Value: proxy})
+		env = func(k string) string { v, _ := edit.GetJSON(path, "env."+k); return v }
+		if env(claudeReviewEnv) != "0" {
+			t.Fatalf("connected, the review isn't off:\n%s", readFile(path))
+		}
+		return cl, env, coldMagpie(t, map[string]bool{proxy: true})
+	}
+	askedOnce := func(t *testing.T, probed []string) {
+		t.Helper()
+		if len(probed) != 1 || probed[0] != proxy {
+			t.Errorf("probed %v, want the proxy once", probed)
+		}
+	}
+
+	t.Run("pick", func(t *testing.T) {
+		cl, env, probed := behind(t)
+		if err := cl.Apply("model", "fake/m3"); err != nil {
+			t.Fatal(err)
+		}
+		if u := env("ANTHROPIC_BASE_URL"); u != proxy {
+			t.Errorf("a pick wrote %s over the proxy", u)
+		}
+		if h := env(tierEnv("haiku")); h != "fake/m2" {
+			t.Errorf("haiku's own model went: %q", h)
+		}
+		askedOnce(t, probed())
+	})
+	t.Run("sync", func(t *testing.T) {
+		cl, env, probed := behind(t)
+		if err := cl.Sync(); err != nil {
+			t.Fatal(err)
+		}
+		if v := env(claudeReviewEnv); v != "0" {
+			t.Errorf("the sync took out the review magpie turned off: %q", v)
+		}
+		askedOnce(t, probed())
+	})
+	t.Run("tier", func(t *testing.T) {
+		cl, env, probed := behind(t)
+		if err := cl.Apply("haiku", "fake/m3"); err != nil {
+			t.Fatal(err)
+		}
+		if h, u := env(tierEnv("haiku")), env("ANTHROPIC_BASE_URL"); h != "fake/m3" || u != proxy {
+			t.Errorf("haiku %q at %s", h, u)
+		}
+		askedOnce(t, probed())
+	})
+	t.Run("disconnect", func(t *testing.T) {
+		cl, env, probed := behind(t)
+		if err := cl.Disconnect(); err != nil {
+			t.Fatal(err)
+		}
+		if u, k := env("ANTHROPIC_BASE_URL"), env("ANTHROPIC_AUTH_TOKEN"); u != own || k != "sk-own" {
+			t.Errorf("after Disconnect, %s with %q, not the user's own endpoint and key", u, k)
+		}
+		if h := env(tierEnv("haiku")); h != "" {
+			t.Errorf("magpie's haiku tier stayed: %q", h)
+		}
+		askedOnce(t, probed())
+	})
+}
+
+// coldMagpie is magpie just started: no answer from any address yet, as a
+// probe a read starts in the background hasn't come back, until a write
+// asks and waits (magpieAsked). magpie answers at the bases in answers. It
+// says which bases were probed.
+func coldMagpie(t *testing.T, answers map[string]bool) func() []string {
+	t.Helper()
+	var mu sync.Mutex
+	var probed []string
+	was, wasAt, age := magpieProbe, magpieAt, reachAge
+	magpieProbe = func(base string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		probed = append(probed, base)
+		return answers[base]
+	}
+	magpieAt = func(base string) (bool, bool) {
+		reach.Lock()
+		defer reach.Unlock()
+		a := reach.m["magpie "+base]
+		return a.ok, !a.at.IsZero()
+	}
+	reachAge = time.Hour
+	reachForget()
+	t.Cleanup(func() { magpieProbe, magpieAt, reachAge = was, wasAt, age; reachForget() })
+	return func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), probed...) }
+}

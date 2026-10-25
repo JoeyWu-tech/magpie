@@ -223,12 +223,20 @@ recorded as a prediction failure (`noPrediction`).
   [`handover.go`](../../internal/gateway/handover.go)). `Inherit` gives the
   new process's `ListenAndServe` a socket to serve when the address is the
   same (`sameAddr`), and calls back once it serves; `HandOff` has the old
-  one's shutdown wait up to `handedOffDrain` (15 minutes) for its requests
-  in flight instead of `shortDrain` (2s). Requests per minute, concurrency
-  and sticky routing's in-memory state are each process's own: sticky
-  routing is flushed to disk before the socket goes (`FlushSticks`), but
-  while the old one drains, a provider's limits can be passed by what each
-  has in flight. `TestHandedOverGatewayFinishesItsStream`,
+  one stop accepting at once (`stopAccepting`: its copy of the socket goes,
+  the new one's keeps it open) and its shutdown wait up to `handedOffDrain`
+  (15 minutes) for its requests in flight instead of `shortDrain` (2s).
+  Before that shutdown, each connection it took sends its first request
+  (`unreadConns`, `unreadWait` 5s at most): `http.Server.Shutdown` closes
+  one whose request it reads after it began unanswered (#3568). Requests
+  per minute, concurrency and sticky routing's in-memory state are each
+  process's own: sticky routing is flushed to disk before the socket goes
+  (`FlushSticks`), but while the old one drains, a provider's limits can be
+  passed by what each has in flight.
+  `TestHandedOverGatewayFinishesItsStream`,
+  `TestHandedOffGatewayTakesNoNewConnection`,
+  `TestHandedOffGatewayAnswersAConnectionItTook`,
+  `TestHandedOffGatewayAnswersAConnectionNotedLate`,
   `TestInheritedForAnotherAddressIsLetGo`, `TestToolCallOfTheMagpieBeforeGoesToIt` in
   [`handover_test.go`](../../internal/gateway/handover_test.go).
 - An agent's turn (Chat, Responses, Messages, Gemini's generateContent and

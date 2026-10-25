@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // The JSON below is niri's own, as niri-ipc 26.4.0 (niri v26.04,
@@ -149,6 +150,12 @@ func fakeNiri(t *testing.T, answer func(req string) string) (sent func() []strin
 		os.RemoveAll(dir)
 	})
 	t.Setenv("NIRI_SOCKET", sock)
+	// this niri is a goroutine of the test binary, and in a full run on a
+	// loaded machine it went unscheduled past niri's second: the request
+	// timed out and the panel was sent nothing at all
+	wait := niriWait
+	niriWait = time.Minute
+	t.Cleanup(func() { niriWait = wait })
 	return func() []string {
 		mu.Lock()
 		defer mu.Unlock()

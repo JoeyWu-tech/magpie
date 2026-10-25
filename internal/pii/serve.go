@@ -80,7 +80,7 @@ func start(cpu bool) (*helper, error) {
 	if !Installed() {
 		return nil, ErrNotInstalled
 	}
-	go upgrade()
+	upgrades.Go(upgrade)
 	var errs []error
 	for _, path := range candidates(cpu) {
 		h, err := startOne(path, cpu)

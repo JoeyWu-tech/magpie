@@ -120,11 +120,16 @@ func fakeServe(mode string) {
 // test's own; it gives the file the stand-in logs to.
 func fakeInstall(t *testing.T, mode string, vulkan bool) string {
 	t.Helper()
+	// an upgrade a request began reads dir and the tags, so it is over
+	// before they change: here, after an install earlier in this test, and
+	// in the cleanup, before this one's and oldInstall's put them back
+	upgrades.Wait()
 	d := t.TempDir()
 	was, wasSize, wasIdle := dir, modelSize, idleAfter
 	dir, modelSize = func() string { return d }, 4
 	t.Cleanup(func() {
 		Stop()
+		upgrades.Wait()
 		srv.mu.Lock()
 		srv.cpu, srv.gpuLost, srv.failed = false, "", ""
 		srv.mu.Unlock()

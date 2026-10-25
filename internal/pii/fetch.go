@@ -120,6 +120,11 @@ func ensureServe(ctx context.Context) error {
 // upgrading is set while upgrade runs.
 var upgrading atomic.Bool
 
+// upgrades counts the upgrades start began, for a test to wait on before
+// it changes what they read (dir and the tags), one that returned at once
+// included (#3628).
+var upgrades sync.WaitGroup
+
 // upgrade fetches serveTag's pf-serve where only an older one is on disk
 // (magpie was updated since the model was downloaded), ends the old one so
 // that the next request starts the new, and deletes the old. One that

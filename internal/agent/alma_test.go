@@ -148,7 +148,19 @@ func startAlma(t *testing.T) *fakeAlma {
 	old := almaAPI
 	almaAPI = srv.URL
 	t.Cleanup(func() { almaAPI = old })
+	almaWaited(t)
 	return f
+}
+
+// almaWaited has magpie wait for a fake Alma as long as it takes to
+// answer. almaClient's 1.5s is for an Alma that isn't running or is stuck;
+// a fake one runs in the test binary, which a busy machine can leave
+// unscheduled longer than that (#3673).
+func almaWaited(t *testing.T) {
+	t.Helper()
+	old := almaClient
+	almaClient = &http.Client{Timeout: 10 * time.Minute}
+	t.Cleanup(func() { almaClient = old })
 }
 
 // repoint is something else changing a provider's baseURL in Alma: how
@@ -411,6 +423,7 @@ func TestAlmaLook(t *testing.T) {
 	oldAPI, oldFor := almaAPI, almaReadFor
 	almaAPI, almaReadFor = srv.URL, time.Minute
 	t.Cleanup(func() { almaAPI, almaReadFor = oldAPI, oldFor })
+	almaWaited(t)
 
 	for range 3 {
 		if _, err := almaSettingsSeen(); err != nil {

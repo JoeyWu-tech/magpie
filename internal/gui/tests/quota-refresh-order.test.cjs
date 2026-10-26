@@ -15,11 +15,12 @@ function section(start, end) {
 const plain = (x) => JSON.parse(JSON.stringify(x));
 const card = (user, used) => ({ provider: "claude", user, windows: [{ name: "7 days", used }] });
 
-function page() {
+function page(m = "window") {
   const context = vm.createContext({ Date, performance, setTimeout });
   vm.runInContext(`
     let quotas = [], quotasAt = 0, quotasKept = false, quotaHist = [], quotasAskedAt = 0, view = "usage";
-    const mode = "window"; // the tray panel ("panel") also keeps each reading (#3160)
+    const mode = ${JSON.stringify(m)}; // the tray panel ("panel") also keeps each reading (#3160)
+    const saved = [], localStorage = { setItem: (k, v) => saved.push([k, v]), getItem: () => null };
     const requests = [], errors = [];
     const usageAcctKey = q => q.provider + "\\n" + (q.user || "").toLowerCase();
     const quotaCycleHolds = new Map(); // past cycles' estimates (#2009), cleared by a refresh
@@ -44,6 +45,7 @@ function page() {
       refresh: q => quotaRefresh(q).onclick({ stopPropagation() {} }),
       answer: (i, x) => requests[i].resolve(x),
       fail: i => requests[i].reject(new Error("offline")),
+      saved: () => saved.map(([k, v]) => [k, JSON.parse(v)]),
     };
   `, context);
   return context.p;
@@ -151,4 +153,20 @@ test("a remote summary becomes its child cards without undoing a local refresh",
   assert.deepEqual(readings(), { "home/claude": 32, codex: 61 });
   p.answer(0, [summary, local]); await loading;
   assert.deepEqual(readings(), { "home/claude": 32, codex: 61 }, "the late GET restored the remote summary or an old local reading");
+});
+
+test("the tray panel keeps the reading it shows, not the older reply a refresh crossed", async () => {
+  // the panel opens next on what it kept (#3160)
+  const p = page("panel"), old = card("a@x.com", 0);
+  p.seed([old]);
+  const loading = p.load(); await tick();
+  const refreshing = p.refresh(old);
+  const post = p.requests.findIndex(r => r.path.includes("/refresh?"));
+  const get = p.requests.findIndex(r => r.path === "usage/quotas");
+  p.answer(post, [card("a@x.com", 32)]); await refreshing;
+  p.answer(get, [old]); await loading;
+  assert.equal(p.cards()[0].windows[0].used, 32, "an older whole-page reply overwrote the refreshed card");
+  const kept = p.saved().filter(([k]) => k === "magpie.panelQuotas").at(-1);
+  assert(kept, "the panel kept nothing");
+  assert.equal(kept[1][0].windows[0].used, 32, "the panel kept the older reply for its next open");
 });

@@ -18,7 +18,7 @@ import (
 
 // pluggedHome is a home of its own with DeepSeek's two models in magpie
 // and the plugins whose agent modules are srcs, each in a folder with a
-// package.json naming it.
+// package.json naming it, given as long as they take to load and connect.
 func pluggedHome(t *testing.T, srcs ...string) string {
 	t.Helper()
 	home := t.TempDir()
@@ -42,6 +42,7 @@ func pluggedHome(t *testing.T, srcs ...string) string {
 	if err := os.WriteFile(filepath.Join(settings.Dir(), "plugins.json"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(agentplug.LimitsForTest())
 	agentplug.Reload()
 	t.Cleanup(agentplug.Reload)
 	return home

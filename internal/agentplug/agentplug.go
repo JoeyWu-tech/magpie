@@ -120,6 +120,18 @@ var (
 	connectLimit = time.Second
 )
 
+// LimitsForTest has agent modules take as long as they need to load and
+// to connect, for tests whose modules answer. The limits are for a module
+// that loops or hangs, and a test's module runs in the test binary, which
+// a busy machine can leave unscheduled longer than a second (#3673). The
+// func it returns puts them back. They are the whole binary's, so it isn't
+// for parallel tests.
+func LimitsForTest() func() {
+	load, connect := loadLimit, connectLimit
+	loadLimit, connectLimit = 10*time.Minute, 10*time.Minute
+	return func() { loadLimit, connectLimit = load, connect }
+}
+
 var errTimeout = errors.New("took too long")
 
 var idOK = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)

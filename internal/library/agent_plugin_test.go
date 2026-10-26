@@ -14,7 +14,7 @@ import (
 )
 
 // plugAgents switches on a plugin for each agent module in srcs, in the
-// sandbox h.
+// sandbox h, given as long as they take to load and connect.
 func plugAgents(t *testing.T, h string, srcs ...string) {
 	t.Helper()
 	var l plugin.List
@@ -26,6 +26,7 @@ func plugAgents(t *testing.T, h string, srcs ...string) {
 	}
 	b, _ := json.Marshal(l)
 	write(t, filepath.Join(settings.Dir(), "plugins.json"), string(b))
+	t.Cleanup(agentplug.LimitsForTest())
 	agentplug.Reload()
 	t.Cleanup(agentplug.Reload)
 }

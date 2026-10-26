@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -232,3 +234,65 @@ func distNamed(b []byte, file string) bool {
 // distLockedAt is a package bun.lock's packages has at a tarball in
 // plugins/dist, and that tarball: "<name>": ["<name>@./dist/<file>", …].
 var distLockedAt = regexp.MustCompile(`\["((?:@[^"/@]+/)?[^"/@]+)@(?:file:)?(?:\./)?dist/([A-Za-z0-9._-]+\.tgz)"`)
+
+// mendDist sends bun.lock back to package.json for the packages it has at a
+// dist tarball package.json doesn't name, when package.json has them at one
+// plugins/dist holds. Bun installs what the lock has, at every command that
+// changes plugins/: from that tarball, which pruneDist keeps, or from its
+// copy of it, it put the older version back, and with neither it failed
+// every install, update and removal, of any plugin, with "ENOENT extracting
+// tarball from <it>". Bun 1.4.4 keys its copies by the tarball's sha512, so
+// it has none of those 1.4.2 and 1.4.3 made (#3622, gkd2323c on Windows,
+// Bun 1.4.4: autoclaw, codearts and cloudflare-workers-ai were locked at
+// tarballs pruneDist had taken, while package.json and the lock's
+// workspaces had moved on). A `bun update` of them all at once resolves
+// them from package.json again: `bun add` doesn't on Bun 1.4.2 and 1.4.3,
+// which keep what the lock has, and with no copy a package left out fails
+// the update with it. A package.json that names the lock's tarball too (Bun
+// 1.4.0 names a package twice) isn't behind. Each mend is logged, as
+// nothing here says why a lock falls behind. installMu held.
+func mendDist(ctx context.Context, bun string) {
+	lock, err := os.ReadFile(filepath.Join(Dir(), "bun.lock"))
+	if err != nil {
+		return
+	}
+	b, err := os.ReadFile(filepath.Join(Dir(), "package.json"))
+	if err != nil {
+		return
+	}
+	var pj struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	if json.Unmarshal(b, &pj) != nil {
+		return
+	}
+	var stale []string
+	for _, m := range distLockedAt.FindAllSubmatch(lock, -1) {
+		name, locked := string(m[1]), string(m[2])
+		file, ok := distSpec(pj.Dependencies[name])
+		if ok && file != locked && distHas(file) == nil && !distNamed(b, locked) && !slices.Contains(stale, name) {
+			stale = append(stale, name)
+		}
+	}
+	if len(stale) > 0 {
+		// what this can't mend, the command it comes before says
+		out, err := bunCommand(ctx, bun, Dir(), append([]string{"update", "--ignore-scripts"}, stale...)...).CombinedOutput()
+		if err != nil {
+			log.Printf("plugins: bun.lock behind package.json for %s; bun update: %v: %s", strings.Join(stale, ", "), err, lastLines(string(out), 3))
+		} else {
+			log.Printf("plugins: bun.lock behind package.json for %s, sent back", strings.Join(stale, ", "))
+		}
+	}
+}
+
+// distSpec is the tarball in plugins/dist a package.json dependency is at.
+func distSpec(spec string) (string, bool) {
+	s := filepath.ToSlash(strings.TrimPrefix(spec, "file:"))
+	return strings.CutPrefix(strings.TrimPrefix(s, "./"), "dist/")
+}
+
+// distHas is os.Stat's answer for plugins/dist/file.
+func distHas(file string) error {
+	_, err := os.Stat(filepath.Join(Dir(), "dist", file))
+	return err
+}

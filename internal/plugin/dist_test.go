@@ -1,16 +1,19 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -317,6 +320,175 @@ func TestDistTarballTheLockNamesStays(t *testing.T) {
 					t.Errorf("%s kept (%v)", f, err)
 				}
 			}
+		})
+	}
+}
+
+// A bun.lock that has packages at tarballs package.json has moved on from,
+// as gkd2323c's had autoclaw, codearts and cloudflare-workers-ai (#3622),
+// is sent back to package.json before Bun runs. Bun installs what the lock
+// has, at every add and removal of any plugin: from the older tarball,
+// which pruneDist keeps now, or from its copy of one gone from
+// plugins/dist, it put the older version back; with neither it failed each
+// with "ENOENT extracting tarball". A Bun moved to 1.4.4 has no copy of
+// those 1.4.2 and 1.4.3 made, as 1.4.4 keys its copies by the tarball's
+// sha512 and they didn't. The state is made with real bun: the lock's
+// packages given back the entries Bun wrote for the tarballs before, which
+// pruneDist took when the newer were added, or which are put back. The
+// packages stay at the versions package.json names, and package.json as it
+// was. A package.json with bytes after its object (plugins#405) is cut
+// first, as mendDist reads it.
+func TestDistLockBehindPackageJSONIsMended(t *testing.T) {
+	const (
+		autoclaw = "@magpie-community/opencode-autoclaw-auth"
+		codearts = "@magpie-community/opencode-codearts-auth"
+		zcode    = "@magpie-community/opencode-zcode-auth"
+	)
+	tarball := func(pkg, v string) string {
+		return strings.ReplaceAll(strings.TrimPrefix(pkg, "@"), "/", "-") + "-" + v + ".tgz"
+	}
+	for _, c := range []struct {
+		name                           string
+		copiesGone, tarballsKept, tail bool
+	}{
+		{"Bun's copies of the tarballs kept", false, false, false},
+		{"Bun's copies of the tarballs gone", true, false, false},
+		{"the tarballs kept", false, true, false},
+		{"Bun's copies gone, package.json with a tail", true, false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			sandbox(t)
+			npmHasNothing(t)
+			fakeDist(t, map[string][]string{autoclaw: {"0.2.1", "0.2.6"}, codearts: {"0.2.0", "0.2.1"}, zcode: {"0.1.30"}}, false)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			lockPath := filepath.Join(Dir(), "bun.lock")
+			readLock := func() []byte {
+				t.Helper()
+				b, err := os.ReadFile(lockPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return b
+			}
+			// the package's entry in the lock's packages, the line Bun writes
+			entry := func(lock []byte, pkg string) []byte {
+				t.Helper()
+				m := regexp.MustCompile(`(?m)^[ \t]*"` + regexp.QuoteMeta(pkg) + `": \[.*$`).Find(lock)
+				if m == nil {
+					t.Fatalf("bun.lock's packages have no %s:\n%s", pkg, lock)
+				}
+				return m
+			}
+			specs := func() map[string]string {
+				t.Helper()
+				b, err := os.ReadFile(filepath.Join(Dir(), "package.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var pj struct{ Dependencies map[string]string }
+				if err := json.Unmarshal(b, &pj); err != nil {
+					t.Fatal(err)
+				}
+				return map[string]string{autoclaw: pj.Dependencies[autoclaw], codearts: pj.Dependencies[codearts]}
+			}
+			before := map[string]string{autoclaw: "0.2.1", codearts: "0.2.0"}
+			want := map[string]string{autoclaw: "0.2.6", codearts: "0.2.1"}
+			was, wasTgz := map[string][]byte{}, map[string][]byte{}
+			for _, at := range []map[string]string{before, want} {
+				for _, pkg := range []string{autoclaw, codearts} {
+					if err := installAt(ctx, pkg, at[pkg]); err != nil {
+						t.Fatalf("installAt %s %s: %v", pkg, at[pkg], err)
+					}
+				}
+				if len(was) == 0 {
+					for _, pkg := range []string{autoclaw, codearts} {
+						was[pkg] = entry(readLock(), pkg)
+						b, err := os.ReadFile(filepath.Join(Dir(), "dist", tarball(pkg, before[pkg])))
+						if err != nil {
+							t.Fatal(err)
+						}
+						wasTgz[pkg] = b
+					}
+				}
+			}
+			pj := specs()
+			breakLock := func() {
+				t.Helper()
+				b := readLock()
+				for pkg, old := range was {
+					f := filepath.Join(Dir(), "dist", tarball(pkg, before[pkg]))
+					if _, err := os.Stat(f); !errors.Is(err, fs.ErrNotExist) {
+						t.Fatalf("%s is still in plugins/dist (%v)", tarball(pkg, before[pkg]), err)
+					}
+					if c.tarballsKept {
+						if err := os.WriteFile(f, wasTgz[pkg], 0o644); err != nil {
+							t.Fatal(err)
+						}
+					}
+					b = bytes.Replace(b, entry(b, pkg), old, 1)
+				}
+				if err := os.WriteFile(lockPath, b, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if c.tail {
+					// what plugins#405's bun remove left after the object
+					f, err := os.OpenFile(filepath.Join(Dir(), "package.json"), os.O_APPEND|os.O_WRONLY, 0)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = f.WriteString("@magpie-community/opencode-zcode-auth\": \"^0.1.27\"\n  }\n}\n")
+					if cerr := f.Close(); err == nil {
+						err = cerr
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if c.copiesGone {
+					if err := os.RemoveAll(installCacheDir()); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			mended := func(after string) {
+				t.Helper()
+				b := readLock()
+				for pkg, v := range want {
+					if got := Installed(pkg); got != v {
+						t.Errorf("after %s, %s is at %q, want %s", after, pkg, got, v)
+					}
+					if !bytes.Contains(entry(b, pkg), []byte(pkg+"@./dist/"+tarball(pkg, v)+`"`)) || bytes.Contains(b, []byte(tarball(pkg, before[pkg]))) {
+						t.Errorf("after %s, bun.lock doesn't have %s at %s alone:\n%s", after, pkg, v, b)
+					}
+				}
+				if got := specs(); !maps.Equal(got, pj) {
+					t.Errorf("after %s, package.json has %v, was %v", after, got, pj)
+				}
+			}
+
+			breakLock()
+			if _, err := Add(ctx, zcode); err != nil {
+				t.Fatalf("Add with the lock behind package.json: %v", err)
+			}
+			if v := Installed(zcode); v != "0.1.30" {
+				t.Fatalf("zcode installed %q", v)
+			}
+			mended("the add")
+			for pkg := range was {
+				if _, err := os.Stat(filepath.Join(Dir(), "dist", tarball(pkg, before[pkg]))); !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("after the add, %s is still in plugins/dist (%v)", tarball(pkg, before[pkg]), err)
+				}
+			}
+
+			breakLock()
+			if err := Remove(ctx, zcode); err != nil {
+				t.Fatal(err)
+			}
+			if b, _ := os.ReadFile(filepath.Join(Dir(), "package.json")); bytes.Contains(b, []byte(zcode)) {
+				t.Fatalf("plugins/package.json still names zcode after Remove:\n%s", b)
+			}
+			mended("the removal")
 		})
 	}
 }

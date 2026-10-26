@@ -5,10 +5,13 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -173,6 +176,148 @@ func TestDistRefusesATarballNotItsIndexs(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(filepath.Join(Dir(), "dist", "*")); len(left) != 0 {
 		t.Fatalf("plugins/dist holds %v", left)
+	}
+}
+
+// pruneDist keeps a tarball plugins/package.json names or bun.lock's
+// packages has a package at, read as Bun writes them. gkd2323c's lock
+// (#3622) had three packages at the tarballs before the ones package.json
+// names, and c158b043 took those out; a package.json Bun 1.4.0 wrote names
+// autoclaw twice, the new tarball first, which Bun reads, and c158b043 kept
+// only the second. The tarball Bun 1.4.2 leaves in the lock's workspaces
+// alone goes, as does one nothing names; with no bun.lock, package.json
+// alone decides; with one that can't be read, nothing goes.
+func TestDistTarballTheLockNamesStays(t *testing.T) {
+	const (
+		autoclaw    = "magpie-community-opencode-autoclaw-auth-0.2.6.tgz"
+		autoclawWas = "magpie-community-opencode-autoclaw-auth-0.2.1.tgz"
+		cloudflare  = "magpie-community-opencode-cloudflare-workers-ai-auth-0.0.3.tgz"
+		cfWas       = "magpie-community-opencode-cloudflare-workers-ai-auth-0.0.2.tgz"
+		codearts    = "magpie-community-opencode-codearts-auth-0.2.1.tgz"
+		codeartsWas = "magpie-community-opencode-codearts-auth-0.2.0.tgz"
+		unnamed     = "magpie-community-opencode-autoclaw-auth-0.2.5.tgz"
+	)
+	// gkd2323c's package.json and lock: the lines #3622 quotes, in the
+	// files Bun writes, the lock's workspaces as package.json (the issue
+	// says they were)
+	reported := `{
+  "name": "magpie-plugins",
+  "private": true,
+  "dependencies": {
+    "@magpie-community/opencode-autoclaw-auth": "./dist/magpie-community-opencode-autoclaw-auth-0.2.6.tgz",
+    "@magpie-community/opencode-cloudflare-workers-ai-auth": "./dist/magpie-community-opencode-cloudflare-workers-ai-auth-0.0.3.tgz",
+    "@magpie-community/opencode-codearts-auth": "./dist/magpie-community-opencode-codearts-auth-0.2.1.tgz"
+  }
+}
+`
+	reportedLock := `{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "magpie-plugins",
+      "dependencies": {
+        "@magpie-community/opencode-autoclaw-auth": "./dist/magpie-community-opencode-autoclaw-auth-0.2.6.tgz",
+        "@magpie-community/opencode-cloudflare-workers-ai-auth": "./dist/magpie-community-opencode-cloudflare-workers-ai-auth-0.0.3.tgz",
+        "@magpie-community/opencode-codearts-auth": "./dist/magpie-community-opencode-codearts-auth-0.2.1.tgz",
+      },
+    },
+  },
+  "packages": {
+    "@magpie-community/opencode-autoclaw-auth": ["@magpie-community/opencode-autoclaw-auth@./dist/magpie-community-opencode-autoclaw-auth-0.2.1.tgz", {}, "sha512-..."],
+
+    "@magpie-community/opencode-cloudflare-workers-ai-auth": ["@magpie-community/opencode-cloudflare-workers-ai-auth@./dist/magpie-community-opencode-cloudflare-workers-ai-auth-0.0.2.tgz", {}, "sha512-..."],
+
+    "@magpie-community/opencode-codearts-auth": ["@magpie-community/opencode-codearts-auth@./dist/magpie-community-opencode-codearts-auth-0.2.0.tgz", {}, "sha512-..."],
+  }
+}
+`
+	// `bun add ./dist/<0.2.6>` over 0.2.1: Bun 1.4.2 writes package.json
+	// so, Bun 1.4.0 with the package twice, and both write the lock below
+	once := `{
+  "name": "magpie-plugins",
+  "private": true,
+  "dependencies": {
+    "@magpie-community/opencode-autoclaw-auth": "./dist/magpie-community-opencode-autoclaw-auth-0.2.6.tgz"
+  }
+}
+`
+	twice := `{
+  "name": "magpie-plugins",
+  "private": true,
+  "dependencies": {
+    "@magpie-community/opencode-autoclaw-auth": "./dist/magpie-community-opencode-autoclaw-auth-0.2.6.tgz",
+    "@magpie-community/opencode-autoclaw-auth": "./dist/magpie-community-opencode-autoclaw-auth-0.2.1.tgz"
+  }
+}
+`
+	updatedLock := `{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "magpie-plugins",
+      "dependencies": {
+        "@magpie-community/opencode-autoclaw-auth": "./dist/magpie-community-opencode-autoclaw-auth-0.2.6.tgz",
+        "@magpie-community/opencode-autoclaw-auth": "./dist/magpie-community-opencode-autoclaw-auth-0.2.1.tgz",
+      },
+    },
+  },
+  "packages": {
+    "@magpie-community/opencode-autoclaw-auth": ["@magpie-community/opencode-autoclaw-auth@./dist/magpie-community-opencode-autoclaw-auth-0.2.6.tgz", {}, "sha512-63rE5gosmPjiHJlJZU3SImX8OBOk8pAKQHX5OAa5Ke2vaSlhVgDzmyPiiiXOJ2fCHMs8ty5cYoMhcOzeaDLhvA=="],
+  }
+}
+`
+	for _, c := range []struct {
+		name, pj, lock string // lock: "" for none, "unreadable" for a folder in its place
+		stay, gone     []string
+	}{
+		{"the lock at the tarballs before", reported, reportedLock, []string{autoclaw, autoclawWas, cloudflare, cfWas, codearts, codeartsWas}, []string{unnamed}},
+		{"package.json naming a package twice", twice, updatedLock, []string{autoclaw, autoclawWas}, []string{unnamed}},
+		{"package.json naming a package twice, no lock", twice, "", []string{autoclaw, autoclawWas}, []string{unnamed}},
+		{"the lock's workspaces alone naming one", once, updatedLock, []string{autoclaw}, []string{autoclawWas, unnamed}},
+		{"no lock", reported, "", []string{autoclaw, cloudflare, codearts}, []string{autoclawWas, cfWas, codeartsWas, unnamed}},
+		{"a lock that can't be read", reported, "unreadable", []string{autoclaw, autoclawWas, cloudflare, cfWas, codearts, codeartsWas, unnamed}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
+			t.Setenv("USERPROFILE", dir)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+			if err := os.MkdirAll(filepath.Join(Dir(), "dist"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(Dir(), "package.json"), []byte(c.pj), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			switch c.lock {
+			case "":
+			case "unreadable":
+				if err := os.Mkdir(filepath.Join(Dir(), "bun.lock"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				if err := os.WriteFile(filepath.Join(Dir(), "bun.lock"), []byte(c.lock), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, f := range append(slices.Clone(c.stay), c.gone...) {
+				if err := os.WriteFile(filepath.Join(Dir(), "dist", f), []byte("tgz"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pruneDist()
+			for _, f := range c.stay {
+				if _, err := os.Stat(filepath.Join(Dir(), "dist", f)); err != nil {
+					t.Errorf("%s taken out: %v", f, err)
+				}
+			}
+			for _, f := range c.gone {
+				if _, err := os.Stat(filepath.Join(Dir(), "dist", f)); !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("%s kept (%v)", f, err)
+				}
+			}
+		})
 	}
 }
 

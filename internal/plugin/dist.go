@@ -1,11 +1,14 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -184,37 +187,48 @@ func installDist(ctx context.Context, bun, name, version string) error {
 	return bunAdd(ctx, bun, "./dist/"+file)
 }
 
-// pruneDist takes out the tarballs in plugins/dist that plugins/package.json
-// no longer names: one an update from npm, or a newer one, took the place
-// of. installMu held. One it can't tell about (package.json unreadable)
-// stays.
+// pruneDist takes out the tarballs in plugins/dist that neither
+// plugins/package.json nor bun.lock's packages has a package at: one an
+// update from npm, or a newer one, took the place of. Bun installs a
+// package from the tarball the lock's packages has it at, which
+// package.json can have moved on from (#3622), so that one stays too.
+// package.json is read as text, every mention counting: Bun 1.4.0 adds a
+// tarball's package again instead of replacing it, and of the two keys
+// encoding/json takes the second where Bun takes the first, so the tarball
+// taken out was the one Bun installs from. A tarball only the lock's
+// workspaces names (Bun 1.4.2 and 1.4.3 keep the one replaced there, and
+// drop it on their next command) goes. installMu held. One it can't tell
+// about (package.json, or a bun.lock that is there, unreadable) stays.
 func pruneDist() {
-	b, err := os.ReadFile(filepath.Join(Dir(), "package.json"))
+	pj, err := os.ReadFile(filepath.Join(Dir(), "package.json"))
 	if err != nil {
 		return
 	}
-	var pj struct {
-		Dependencies map[string]string `json:"dependencies"`
-	}
-	if json.Unmarshal(b, &pj) != nil {
+	lock, err := os.ReadFile(filepath.Join(Dir(), "bun.lock"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return
 	}
-	named := map[string]bool{}
-	for _, s := range pj.Dependencies {
-		s = strings.TrimPrefix(s, "file:")
-		if rest, ok := strings.CutPrefix(filepath.ToSlash(s), "./dist/"); ok {
-			named[rest] = true
-		} else if rest, ok := strings.CutPrefix(filepath.ToSlash(s), "dist/"); ok {
-			named[rest] = true
-		}
+	locked := map[string]bool{}
+	for _, m := range distLockedAt.FindAllSubmatch(lock, -1) {
+		locked[string(m[2])] = true
 	}
 	ents, err := os.ReadDir(filepath.Join(Dir(), "dist"))
 	if err != nil {
 		return
 	}
 	for _, e := range ents {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".tgz") && !named[e.Name()] {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".tgz") && !locked[e.Name()] && !distNamed(pj, e.Name()) {
 			os.Remove(filepath.Join(Dir(), "dist", e.Name()))
 		}
 	}
 }
+
+// distNamed is whether package.json b names the tarball plugins/dist/file
+// anywhere: "./dist/file" (the spec magpie hands Bun) or "file:dist/file".
+func distNamed(b []byte, file string) bool {
+	return bytes.Contains(b, []byte("dist/"+file+`"`))
+}
+
+// distLockedAt is a package bun.lock's packages has at a tarball in
+// plugins/dist, and that tarball: "<name>": ["<name>@./dist/<file>", …].
+var distLockedAt = regexp.MustCompile(`\["((?:@[^"/@]+/)?[^"/@]+)@(?:file:)?(?:\./)?dist/([A-Za-z0-9._-]+\.tgz)"`)

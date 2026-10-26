@@ -42,6 +42,7 @@ function page(m = "window") {
       seed: x => { quotas = x; },
       cards: () => quotas,
       load: () => loadQuotas(),
+      ask: () => loadQuotas(true), // Refresh now
       refresh: q => quotaRefresh(q).onclick({ stopPropagation() {} }),
       answer: (i, x) => requests[i].resolve(x),
       fail: i => requests[i].reject(new Error("offline")),
@@ -51,6 +52,8 @@ function page(m = "window") {
   return context.p;
 }
 const tick = () => new Promise(setImmediate);
+// the whole-page reads on their way, by query ("" or "?asked=1")
+const gets = (p, q) => p.requests.flatMap((r, i) => r.path === "usage/quotas" + q ? [i] : []);
 
 for (const when of ["before", "during"]) {
   test(`a background read started ${when} a card refresh cannot undo its result`, async () => {
@@ -169,4 +172,58 @@ test("the tray panel keeps the reading it shows, not the older reply a refresh c
   const kept = p.saved().filter(([k]) => k === "magpie.panelQuotas").at(-1);
   assert(kept, "the panel kept nothing");
   assert.equal(kept[1][0].windows[0].used, 32, "the panel kept the older reply for its next open");
+});
+
+test("Refresh now asked behind a background read is newer than a card refresh landing while it waits", async () => {
+  const p = page(), old = card("a@x.com", 0);
+  p.seed([old]);
+  const first = p.load(); await tick();
+  const asked = p.ask(); await tick();
+  const refresh = p.refresh(old);
+  const post = p.requests.findIndex(r => r.path.includes("/refresh?"));
+  p.answer(post, [card("a@x.com", 32)]); await refresh;
+  p.answer(0, [old]); await first; await tick();
+  const g = gets(p, "?asked=1");
+  assert.equal(g.length, 1, "Refresh now never went out");
+  p.answer(g[0], [card("a@x.com", 40)]); await asked;
+  assert.equal(p.cards()[0].windows[0].used, 40, "a read that went out after the card refresh lost to it");
+});
+
+test("an older whole-page read never lands over a newer asked one", async () => {
+  // reads go out one at a time, so the asked one answers last
+  const p = page(), old = card("a@x.com", 0);
+  p.seed([old]);
+  const first = p.load(); await tick();
+  const refresh = p.refresh(old);
+  const post = p.requests.findIndex(r => r.path.includes("/refresh?"));
+  p.answer(post, [card("a@x.com", 32)]); await refresh;
+  const asked = p.ask(); await tick();
+  for (const i of gets(p, "?asked=1")) p.answer(i, [card("a@x.com", 40)]); // answered first, if it is out already
+  await tick();
+  p.answer(0, [old]); await first; await tick();
+  for (const i of gets(p, "?asked=1")) p.answer(i, [card("a@x.com", 40)]);
+  await asked;
+  assert.equal(p.cards()[0].windows[0].used, 40, "an older read landed over a newer one");
+});
+
+test("a whole-page read landing between leaves a newer card protected from a renamed reply", async () => {
+  const p = page(), unnamed = card("", 0), b = card("b@x.com", 0);
+  p.seed([unnamed, b]);
+  const first = p.refresh(unnamed);
+  const loading = p.load(); await tick();
+  const second = p.refresh(b);
+  p.answer(2, [unnamed, card("b@x.com", 61)]); await second;
+  p.answer(1, [unnamed, b]); await loading;
+  p.answer(0, [card("a@x.com", 32), b]); await first;
+  assert.deepEqual(plain(p.cards()).map(q => [q.user, q.windows[0].used]), [["a@x.com", 32], ["b@x.com", 61]], "the renamed reply undid b's refresh once a read had landed");
+});
+
+test("a card a renamed reply leaves out stays out against an older whole-page reply", async () => {
+  const p = page(), unnamed = card("", 0), gone = card("c@x.com", 5);
+  p.seed([unnamed, gone]);
+  const loading = p.load(); await tick();
+  const refresh = p.refresh(unnamed);
+  p.answer(1, [card("a@x.com", 32)]); await refresh;
+  p.answer(0, [unnamed, gone]); await loading;
+  assert.deepEqual(plain(p.cards()).map(q => q.user), ["a@x.com"], "an older read restored a card the refresh had replaced");
 });

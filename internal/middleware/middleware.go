@@ -73,8 +73,10 @@ type mw struct {
 // set is the middleware in force, in plugins.json's order.
 type set struct {
 	stamp string
-	list  []*mw
-	errs  map[string]string // by spec: why it didn't load
+	// imports are the files its modules imported, which stamp doesn't have
+	imports jsmod.Imports
+	list    []*mw
+	errs    map[string]string // by spec: why it didn't load
 	// hooked: some module of list has onRequest, onProvider, onEvent or
 	// onResponse
 	hooked      bool
@@ -89,9 +91,9 @@ var (
 	checkedGen atomic.Uint64
 )
 
-// current is the middleware in force, loaded again when plugins.json or a
-// middleware's file changed, which is looked at once a second, and at
-// once after magpie wrote a file of its own.
+// current is the middleware in force, loaded again when plugins.json, a
+// middleware's file or a file it imports changed, which is looked at once
+// a second, and at once after magpie wrote a file of its own.
 func current() *set {
 	s := cur.Load()
 	now := time.Now().UnixNano()
@@ -102,12 +104,12 @@ func current() *set {
 	}
 	checkedGen.Store(g)
 	st := stamp()
-	if s != nil && s.stamp == st {
+	if s != nil && s.stamp == st && !s.imports.Changed() {
 		return s
 	}
 	loadMu.Lock()
 	defer loadMu.Unlock()
-	if s := cur.Load(); s != nil && s.stamp == st {
+	if s := cur.Load(); s != nil && s.stamp == st && !s.imports.Changed() {
 		return s
 	}
 	s = load(st)
@@ -156,7 +158,8 @@ func stamp() string {
 func load(st string) *set {
 	s := &set{stamp: st, errs: map[string]string{}}
 	for _, f := range middlewares() {
-		m, err := compile(f.e, f.file)
+		m, imports, err := compile(f.e, f.file)
+		s.imports = append(s.imports, imports...)
 		if err != nil {
 			s.errs[f.e.Spec] = err.Error()
 			log.Printf("middleware %s didn't load: %v", plugin.Name(f.e.Spec), err)
@@ -170,15 +173,16 @@ func load(st string) *set {
 
 // compile compiles the middleware in file and the modules it imports,
 // which are files beside it: there is no node_modules here, so a package
-// is bundled into the middleware.
-func compile(e plugin.Entry, file string) (*mw, error) {
+// is bundled into the middleware. It gives the files it imported, also
+// when it fails.
+func compile(e plugin.Entry, file string) (*mw, jsmod.Imports, error) {
 	root := filepath.Dir(file)
 	if t := plugin.Target(e.Spec); t != file {
 		root = t
 	}
-	mod, err := jsmod.Compile(root, file, "a middleware")
+	mod, imports, err := jsmod.Compile(root, file, "a middleware")
 	if err != nil {
-		return nil, err
+		return nil, imports, err
 	}
 	m := &mw{spec: e.Spec, name: plugin.Name(e.Spec), mod: mod, options: []byte("{}")}
 	if len(e.Options) > 0 {
@@ -189,17 +193,17 @@ func compile(e plugin.Entry, file string) (*mw, error) {
 	// a runtime of its own says which hooks it has, and is the pool's first
 	in, err := m.newInst()
 	if err != nil {
-		return nil, err
+		return nil, imports, err
 	}
 	m.onReq, m.hasReq = in.hook("onRequest")
 	m.onProv, m.hasProv = in.hook("onProvider")
 	m.onEv, m.hasEv = in.hook("onEvent")
 	m.onResp, m.hasResp = in.hook("onResponse")
 	if err := m.discover(in); err != nil {
-		return nil, err
+		return nil, imports, err
 	}
 	if !m.hasReq && !m.hasProv && !m.hasEv && !m.hasResp && len(m.strats) == 0 && !m.hasUse {
-		return nil, errors.New("exports none of onRequest, onProvider, onEvent, onResponse, strategies and onUsage")
+		return nil, imports, errors.New("exports none of onRequest, onProvider, onEvent, onResponse, strategies and onUsage")
 	}
 	if names, ok := in.strings("events"); ok {
 		m.events = map[string]bool{}
@@ -208,7 +212,7 @@ func compile(e plugin.Entry, file string) (*mw, error) {
 		}
 	}
 	m.pool.Put(in)
-	return m, nil
+	return m, imports, nil
 }
 
 // inst is one runtime of a middleware.

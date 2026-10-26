@@ -45,7 +45,7 @@ Only requests agents send go through `serveAgent`. magpie's own requests (thread
 - Limits: 250ms for `onRequest`, each `onProvider` and `onResponse`, 50ms for each `onEvent`, 1s to load. A hook past its limit is interrupted.
 - Fail open: a hook that throws, returns something that is neither an object, `null` nor `undefined` (an `onProvider` returning `null` too), or is interrupted leaves the request or event as it was. The failure is counted and kept as the last error, and logged at most 60 lines a minute.
 - A middleware imports only relative files; packages must be bundled into it.
-- Reload: a change to plugins.json or to a middleware file is picked up by the next request at most a second later (`stamp`).
+- Reload: a change to plugins.json, to a middleware file or to a file it imports is picked up by the next request at most a second later (`stamp`, and the imports `jsmod.Compile` gives, #3723).
 - A strategy has 20ms, waiting for its runtime included; one that throws, runs out of time or returns what isn't an order of the seats leaves them in their listed order (fail open), counted and logged as a failure. `onUsage` has 250ms and fails open the same way. A request never waits for `onUsage`.
 - Stats count the whole call, including parsing JSON into the runtime and writing it back. Calls are counted in the process that runs the gateway, so `magpie plugin` shows hooks and load errors only.
 

@@ -298,6 +298,66 @@ func TestReloadOnChange(t *testing.T) {
 	}
 }
 
+// A file the middleware imports is looked at as the middleware's own file
+// is (#3723): one edited, one that didn't load and is fixed, and one
+// imported before it was there.
+func TestReloadOnImportChange(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, src string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("package.json", `{"name":"alias","magpie":{"middleware":"./index.js"}}`)
+	write("index.js", `export * from "./hooks.js";`)
+	write("hooks.js", `export function onRequest(b) { b.model = "a"; return b; }`)
+	use(t, plugin.Entry{Spec: dir})
+	// the model a request goes on with, and why the middleware didn't load
+	run := func() (string, string) {
+		t.Helper()
+		nextCheck.Store(0)
+		r := Begin(info())
+		defer r.End()
+		b, _ := r.Request([]byte(`{"model":"m1"}`))
+		var got struct{ Model string }
+		json.Unmarshal(b, &got)
+		return got.Model, States()[dir].Error
+	}
+	if m, err := run(); m != "a" || err != "" {
+		t.Fatalf("first: %q, %q", m, err)
+	}
+	write("hooks.js", `export function onRequest(b) { b.model = "bb"; return b; }`)
+	if m, err := run(); m != "bb" || err != "" {
+		t.Fatalf("after hooks.js was edited: %q, %q", m, err)
+	}
+	write("hooks.js", `export function onRequest(b) { b.model = `)
+	if m, err := run(); m != "m1" || !strings.Contains(err, "hooks.js") {
+		t.Fatalf("after hooks.js was broken: %q, %q", m, err)
+	}
+	write("hooks.js", `export function onRequest(b) { b.model = "ccc"; return b; }`)
+	if m, err := run(); m != "ccc" || err != "" {
+		t.Fatalf("after hooks.js was mended: %q, %q", m, err)
+	}
+	// compiled, and nothing the gateway calls
+	write("hooks.js", `export const nothing = 1;`)
+	if m, err := run(); m != "m1" || !strings.Contains(err, "exports none") {
+		t.Fatalf("after hooks.js exported nothing: %q, %q", m, err)
+	}
+	write("hooks.js", `export function onRequest(b) { b.model = "dddd"; return b; }`)
+	if m, err := run(); m != "dddd" || err != "" {
+		t.Fatalf("after hooks.js exported onRequest again: %q, %q", m, err)
+	}
+	write("index.js", `export * from "./hooks.js"; export * from "./more.js";`)
+	if m, err := run(); m != "m1" || !strings.Contains(err, "more.js") {
+		t.Fatalf("importing more.js before it was there: %q, %q", m, err)
+	}
+	write("more.js", `export const more = 1;`)
+	if m, err := run(); m != "dddd" || err != "" {
+		t.Fatalf("after more.js was made: %q, %q", m, err)
+	}
+}
+
 // sse is a stream as Anthropic's API sends it.
 const sse = "event: message_start\ndata: {\"type\":\"message_start\"}\n\n" +
 	"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"secret here\"}}\n\n" +

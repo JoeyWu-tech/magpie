@@ -126,8 +126,10 @@ var idOK = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 type set struct {
 	stamp string
-	list  []*Agent
-	errs  map[string]string // by spec: why it didn't load
+	// imports are the files its modules imported, which stamp doesn't have
+	imports jsmod.Imports
+	list    []*Agent
+	errs    map[string]string // by spec: why it didn't load
 }
 
 var (
@@ -138,8 +140,8 @@ var (
 
 // List is the agents the plugins switched on add, in plugins.json's
 // order, and why any didn't load, by plugin spec. It is loaded again when
-// plugins.json or a module's file changed, which is looked at once a
-// second.
+// plugins.json, a module's file or a file it imports changed, which is
+// looked at once a second.
 func List() ([]*Agent, map[string]string) {
 	s := current()
 	return s.list, s.errs
@@ -160,12 +162,12 @@ func current() *set {
 		return s
 	}
 	st := stamp()
-	if s != nil && s.stamp == st {
+	if s != nil && s.stamp == st && !s.imports.Changed() {
 		return s
 	}
 	loadMu.Lock()
 	defer loadMu.Unlock()
-	if s := cur.Load(); s != nil && s.stamp == st {
+	if s := cur.Load(); s != nil && s.stamp == st && !s.imports.Changed() {
 		return s
 	}
 	s = load(st)
@@ -207,7 +209,8 @@ func load(st string) *set {
 	s := &set{stamp: st, errs: map[string]string{}}
 	seen := map[string]string{}
 	for _, f := range modules() {
-		a, err := Compile(f.e.Spec, f.file)
+		a, imports, err := Compile(f.e.Spec, f.file)
+		s.imports = append(s.imports, imports...)
 		if err == nil && seen[a.Desc.ID] != "" {
 			err = fmt.Errorf("agent id %q is %s's too", a.Desc.ID, plugin.Name(seen[a.Desc.ID]))
 		}
@@ -223,22 +226,23 @@ func load(st string) *set {
 }
 
 // Compile compiles the agent module in file, of the plugin spec, and
-// checks what its agent export says.
-func Compile(spec, file string) (*Agent, error) {
+// checks what its agent export says. It gives the files it imported, also
+// when it fails.
+func Compile(spec, file string) (*Agent, jsmod.Imports, error) {
 	root := filepath.Dir(file)
 	if t := plugin.Target(spec); t != file {
 		root = t
 	}
-	mod, err := jsmod.Compile(root, file, "an agent plugin")
+	mod, imports, err := jsmod.Compile(root, file, "an agent plugin")
 	if err != nil {
-		return nil, err
+		return nil, imports, err
 	}
 	a := &Agent{Spec: spec, File: file, rt: moejs.NewRuntime(moejs.Options{})}
 	if err := a.rt.SetGlobal("console", console(a)); err != nil {
-		return nil, err
+		return nil, imports, err
 	}
 	if err := a.limit(loadLimit, func() error { return a.rt.Load(mod) }); err != nil {
-		return nil, err
+		return nil, imports, err
 	}
 	v, ok := a.rt.Export("agent")
 	if !ok || !v.IsObject() {
@@ -247,13 +251,13 @@ func Compile(spec, file string) (*Agent, error) {
 		}
 	}
 	if !v.IsObject() {
-		return nil, errors.New("exports no agent object")
+		return nil, imports, errors.New("exports no agent object")
 	}
 	if err := a.rt.Unmarshal(v, &a.Desc); err != nil {
-		return nil, fmt.Errorf("agent: %w", err)
+		return nil, imports, fmt.Errorf("agent: %w", err)
 	}
 	if err := a.Desc.check(); err != nil {
-		return nil, err
+		return nil, imports, err
 	}
 	for _, h := range [][]string{{"connect"}, {"default", "connect"}} {
 		if hk, err := mod.Hook(h[0], h[1:]...); err == nil {
@@ -266,9 +270,9 @@ func Compile(spec, file string) (*Agent, error) {
 	// connect only: with no model key, connect's keys are all magpie
 	// writes, so a module with neither would write nothing
 	if a.Desc.Model == "" && !a.has {
-		return nil, errors.New("agent.model names no key, and there is no connect to write the gateway: say one or both")
+		return nil, imports, errors.New("agent.model names no key, and there is no connect to write the gateway: say one or both")
 	}
-	return a, nil
+	return a, imports, nil
 }
 
 func (d *Desc) check() error {

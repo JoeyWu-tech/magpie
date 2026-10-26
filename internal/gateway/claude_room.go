@@ -34,12 +34,14 @@ type claudeRoomT struct {
 	// magpie has asked to end, not ended yet; waiting how many asks wait
 	// for room
 	live, leaving, waiting int
-	// freed is closed, and made anew, each time one ends, or a run comes
-	// to wait for its next turn (nudge), which may be let go for room
+	// freed is what the asks waiting for room wait on: the first to wait
+	// makes it (take), and it is closed and dropped when a process ends,
+	// or a run comes to wait for its next turn (nudge), which may be let
+	// go for room (endWaits), or dropped once no ask waits
 	freed chan struct{}
 }
 
-var claudeRoom = &claudeRoomT{freed: make(chan struct{})}
+var claudeRoom = &claudeRoomT{}
 
 // claudeRoomWait is how long a Claude Code waits for room before its
 // request is answered 503.
@@ -219,6 +221,9 @@ func (c *claudeRoomT) take(ctx context.Context, what string) (func(left bool), e
 		if waiting {
 			c.mu.Lock()
 			c.waiting--
+			if c.waiting == 0 {
+				c.freed = nil // no ask waits on it (endWaits)
+			}
 			c.mu.Unlock()
 		}
 	}()
@@ -237,6 +242,9 @@ func (c *claudeRoomT) take(ctx context.Context, what string) (func(left bool), e
 			waiting = true
 			c.waiting++
 			log.Printf("claude: %s waits for room: %d Claude Code processes run, %d may (%s)", what, c.live, most, why)
+		}
+		if c.freed == nil {
+			c.freed = make(chan struct{})
 		}
 		freed, live := c.freed, c.live
 		evict := c.live-c.leaving >= most && c.leaving < c.waiting
@@ -278,8 +286,7 @@ var roomLook = 5 * time.Second
 func (c *claudeRoomT) nudge() {
 	c.mu.Lock()
 	if c.waiting > 0 {
-		close(c.freed)
-		c.freed = make(chan struct{})
+		c.endWaits()
 	}
 	c.mu.Unlock()
 }
@@ -291,9 +298,24 @@ func (c *claudeRoomT) release(left bool) {
 	if left {
 		c.leaving--
 	}
-	close(c.freed)
-	c.freed = make(chan struct{})
+	c.endWaits()
 	c.mu.Unlock()
+}
+
+// endWaits wakes the asks waiting for room, c.mu held: it closes the
+// channel take gave them, if it gave one, and makes none. A test may run
+// Claude Code inside a synctest bubble, and a channel made there is the
+// bubble's: one closed, or waited on, outside it is a fatal error that
+// takes the package's tests down, as filememo's Forget did (#3632,
+// #3690). So only an ask that waits for room makes one, and once no ask
+// waits it is dropped (take): one made in a bubble is gone when the
+// bubble's asks are, unless a release or an ask outside the bubble comes
+// while they wait.
+func (c *claudeRoomT) endWaits() {
+	if c.freed != nil {
+		close(c.freed)
+		c.freed = nil
+	}
 }
 
 // letGoForRoom lets go of one run for room, of any bridge: the one idle

@@ -20,6 +20,13 @@ import (
 // and never as what the model takes it for (a name, an account), but for
 // hex digits without hyphens it calls a secret (an API key in prose). What
 // the user chose (their words, their rules) stays theirs.
+//
+// An element token cua-driver made for computer use is one too: s and the
+// snapshot's counter in 8 hex digits, a colon and the element's index
+// (s0000002a:14). The model clicks by it, and a masked one is a click on
+// nothing (#3782). Its field is named for an element (element_token), not
+// a credential. Without the index, s and 8 hex digits is one only as such
+// a field's value: alone in a text it may be a student's number.
 
 // noIDs is found without what is in an id of s, but for what the user
 // chose and the credentials named for one.
@@ -41,8 +48,9 @@ func noIDs(s string, found []span) []span {
 			return false
 		case ByModel:
 			// a key the model found in prose: 32 hex digits it calls a
-			// secret ("the api key is 9f8e…"); never a UUID
-			return f.kind != "SECRET" || uuidRe.MatchString(s[l:r])
+			// secret ("the api key is 9f8e…"); never a UUID or an element
+			// token
+			return f.kind != "SECRET" || uuidRe.MatchString(s[l:r]) || elementToken(s, l, r)
 		case ByRule:
 			switch f.kind {
 			case "PASSWORD", "API_KEY", "TOKEN", "PRIVATE_KEY":
@@ -56,9 +64,13 @@ func noIDs(s string, found []span) []span {
 }
 
 // idAround is the id that s[a:b] is in, or is: the run of hex digits and
-// hyphens around it, when that run is a UUID or 32 hex digits or more.
-// ok is false where s[a:b] reaches past such a run.
+// hyphens around it, when that run is a UUID or 32 hex digits or more, or
+// s[a:b] when it is an element token. ok is false where s[a:b] reaches
+// past such a run.
 func idAround(s string, a, b int) (l, r int, ok bool) {
+	if elementToken(s, a, b) {
+		return a, b, true
+	}
 	l, r = a, b
 	for l > 0 && hexOrHyphen(s[l-1]) {
 		l--
@@ -79,6 +91,37 @@ func idAround(s string, a, b int) (l, r int, ok bool) {
 	return l, r, true
 }
 
+// elementToken says s[a:b] is an element token, or its snapshot's part
+// (s0000002a, where the secret rule's value stops, at the colon): s and 8
+// lowercase hex digits, then a colon and the index, with no letter, digit
+// or _ on either side. Without an index, only the value of a field named
+// for an element is one ("element_token": "s00000001").
+func elementToken(s string, a, b int) bool {
+	if b-a < 9 || s[a] != 's' || a > 0 && wordByte(s[a-1]) {
+		return false
+	}
+	for _, c := range []byte(s[a+1 : a+9]) {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	end := a + 9
+	if end < len(s) && s[end] == ':' {
+		i := end + 1
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if i == end+1 {
+			return false // a colon and no index
+		}
+		end = i
+	}
+	if b != a+9 && b != end || end < len(s) && wordByte(s[end]) {
+		return false
+	}
+	return end > a+9 || slices.Contains(fieldWords(s, a), "element")
+}
+
 func hexOrHyphen(c byte) bool {
 	return c == '-' || c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }
@@ -91,24 +134,9 @@ func idShaped(v string) bool {
 
 // credentialField says the field whose value starts at s[at] is named for
 // a credential: refresh_token, DB_PASSWORD, x-api-key; not one named for
-// an id, a cursor or a request, and not a bare "key".
+// an id, a cursor, a request or an element, and not a bare "key".
 func credentialField(s string, at int) bool {
-	i := at
-	for i > 0 && strings.IndexByte(" \t\"'\\", s[i-1]) >= 0 {
-		i--
-	}
-	if i == 0 || s[i-1] != ':' && s[i-1] != '=' {
-		return false
-	}
-	i--
-	for i > 0 && strings.IndexByte(" \t\"'\\", s[i-1]) >= 0 {
-		i--
-	}
-	j := i
-	for j > 0 && strings.IndexByte(alnum+"_.-", s[j-1]) >= 0 {
-		j--
-	}
-	words := nameWords(s[j:i])
+	words := fieldWords(s, at)
 	if len(words) < 2 && (len(words) == 0 || words[0] == "key") {
 		return false
 	}
@@ -118,12 +146,33 @@ func credentialField(s string, at int) bool {
 	}
 	for _, w := range words {
 		switch w {
-		case "page", "next", "cursor", "continuation", "csrf", "xsrf", "trace", "request", "idempotency", "sync", "nonce",
+		case "page", "next", "cursor", "continuation", "csrf", "xsrf", "trace", "request", "idempotency", "sync", "nonce", "element",
 			"hash", "digest", "checksum", "sha", "fingerprint", "etag":
 			return false
 		}
 	}
 	return true
+}
+
+// fieldWords are the words of the name of the field whose value starts at
+// s[at] (nameWords), none where no field's name is before it.
+func fieldWords(s string, at int) []string {
+	i := at
+	for i > 0 && strings.IndexByte(" \t\"'\\", s[i-1]) >= 0 {
+		i--
+	}
+	if i == 0 || s[i-1] != ':' && s[i-1] != '=' {
+		return nil
+	}
+	i--
+	for i > 0 && strings.IndexByte(" \t\"'\\", s[i-1]) >= 0 {
+		i--
+	}
+	j := i
+	for j > 0 && strings.IndexByte(alnum+"_.-", s[j-1]) >= 0 {
+		j--
+	}
+	return nameWords(s[j:i])
 }
 
 // nameWords are a field's name's words in lower case: next_page_token,

@@ -1936,7 +1936,9 @@ func (h *holdWriter) cutLoop(b []byte, t loopTrip) (int, error) {
 	} else {
 		io.WriteString(h.w, "\n\n")
 	}
-	streamError(h.w, proto, http.StatusBadGateway, msg)
+	// no model: the reply went ahead under its own id and model, and an
+	// error that starts a message of its own after it is #3792
+	streamError(h.w, proto, "", http.StatusBadGateway, msg)
 	h.looped, h.ended = msg, true
 	h.flush()
 	if h.stop != nil {
@@ -2188,6 +2190,9 @@ var keepHeldAfter = holdLongest
 // a reply: the stream's headers and SSE comments, nothing of the reply.
 type keptAlive struct {
 	proto provider.Protocol
+	// model is the one the agent asked for, which an error sent in the
+	// stream names (streamError, #3728)
+	model string
 	sent  bool      // the stream's 200 and headers went out
 	at    time.Time // the last comment
 	// told is when the agent was last sent anything of a reply, else when
@@ -2465,10 +2470,10 @@ func (h *holdWriter) release() {
 		case h.failure != 0:
 			// a 200 that is no reply of the protocol's (settle)
 			who := cmp.Or(h.header.Get(providerHeader), "the provider")
-			streamError(h.w, h.alive.proto, h.failure, who+" "+h.failMsg)
+			streamError(h.w, h.alive.proto, h.alive.model, h.failure, who+" "+h.failMsg)
 		case h.status >= 400:
 			// an error status, once the agent has a stream: told as its error
-			streamError(h.w, h.alive.proto, h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)))
+			streamError(h.w, h.alive.proto, h.alive.model, h.status, provider.APIError(h.held.Bytes(), http.StatusText(h.status)))
 		default:
 			// a reply given whole by a vendor that ignored stream:true,
 			// after the agent was kept alive: sent as the stream it asked

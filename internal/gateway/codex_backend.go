@@ -960,6 +960,7 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 			who = "Codex's API key"
 		}
 		model := modelOf(body)
+		kept.model = model // only a turn is kept alive (overload)
 		effort = requestEffort(provider.Responses, body)
 		seat := Weighed{ID: "codex", Provider: "openai", Name: "OpenAI", Icon: "openai", Who: who, Kind: "account", Agent: "codex", Model: model}
 		link := s.titlePrompts.observe(r, body, metadata, kind, start)
@@ -1027,7 +1028,7 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	// error once it was sent the stream's headers while it waited
 	failWith := func(status int, msg string) {
 		if kept.sent {
-			streamError(w, provider.Responses, status, msg)
+			streamError(w, provider.Responses, kept.model, status, msg)
 			return
 		}
 		writeError(w, provider.Responses, status, msg)

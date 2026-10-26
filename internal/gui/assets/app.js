@@ -7235,9 +7235,10 @@ function morePluginsTile(q) {
   return b;
 }
 
-// openPlugins: the Plugins tab, looking for q when there is one
+// openPlugins: the Plugins tab, looking for q when there is one; from the
+// tray panel the window opens there, on Discover too (#3579)
 async function openPlugins(q) {
-  if (mode !== "window") { api("window/main?view=plugins", {}).catch(() => {}); return; }
+  if (mode !== "window") { api("window/main?view=plugins&q=" + encodeURIComponent(q || ""), {}).catch(() => {}); return; }
   if (!await show("plugins")) return;
   window.pluginQuery?.(q || "");
 }

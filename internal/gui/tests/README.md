@@ -342,7 +342,10 @@ with the API faked.
 `plugins-more-discover.test.cjs` checks that the add sheet's "More in
 Plugins" row and its "look for a plugin" link open Plugins on Discover,
 after Built-in or Installed was the tab open last (outloudvi on Discord).
-English and Chinese, Chromium and WebKit, with the API faked.
+From the tray panel they ask the window for Plugins with what was looked
+for (`window/main?view=plugins&q=`), and the window opened at the address
+`mainView` makes of that shows Discover once, its address giving q up
+(#3579). English and Chinese, Chromium and WebKit, with the API faked.
 
 `plugin-git.test.cjs` checks a plugin installed from a git repository: the
 market's field says it takes a GitHub repo, and Install sends

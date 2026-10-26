@@ -232,6 +232,7 @@
   }
 
   async function load() {
+    if (panelQ !== null) { discover(panelQ); panelQ = null; }
     if (!mine && !listings) draw();
     const parts = [
       loadMine().then(() => { draw(); window.renderPluginDot?.(); }),
@@ -249,14 +250,24 @@
   // plugins with an update are named at the top
   window.pluginTabTo = (id) => { tab = id; };
   // pluginQuery: Discover, looking for q (the add sheet found nothing by it)
-  window.pluginQuery = (q) => {
+  const discover = (q) => {
     query = q;
     tab = "discover";
     clearTimeout(searchTimer);
     hits = q.trim().length >= 2 ? { q: q.trim(), loading: true } : null;
     if (hits) searchNPM(hits.q);
-    draw();
   };
+  window.pluginQuery = (q) => { discover(q); draw(); };
+  // the window the tray panel's More in Plugins opened (mainView's q): the
+  // same, once, on the first load, after show() has sent a window with an
+  // update waiting to Installed, as openPlugins does. q leaves the address,
+  // so a reload opens the tab kept (#3579)
+  let panelQ = null;
+  if (mode === "window" && params.get("view") === "plugins" && params.has("q")) {
+    panelQ = params.get("q");
+    params.delete("q");
+    history.replaceState(null, "", "?" + params);
+  }
 
   async function refresh() {
     // a plugin installed, switched on or off, or removed brings its

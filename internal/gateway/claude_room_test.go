@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/yetone/magpie/internal/provider"
@@ -26,7 +27,7 @@ import (
 func freshRoom(t *testing.T, most int) {
 	t.Helper()
 	old := claudeRoom
-	claudeRoom = &claudeRoomT{freed: make(chan struct{})}
+	claudeRoom = &claudeRoomT{}
 	memRuns.Lock()
 	known, n, why := memRuns.known, memRuns.n, memRuns.why
 	memRuns.known, memRuns.n, memRuns.why = true, 0, ""
@@ -397,4 +398,139 @@ func TestClaudeNoRoomPassesOnAndRestsNobody(t *testing.T) {
 		t.Fatalf("alone, asked %d times: %+v", len(tries), tries)
 	}
 	noneRested(t, "claude")
+}
+
+// A test may run Claude Code inside a synctest bubble, and claudeRoom
+// outlives the bubble: freed made anew by a release or a nudge in it, or
+// left by an ask that gave up waiting there, would be the bubble's, and
+// the next release outside it closing that, or an ask waiting on it,
+// would be a fatal error that takes the package's tests down, as
+// filememo's did (#3632, #3690). An ask waiting outside a bubble is
+// still woken by a release or a nudge in one: roomLook is put off past
+// the test, so only freed can wake it.
+func TestClaudeRoomAcrossBubbles(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	freshRoom(t, 1)
+	was := roomLook
+	roomLook = time.Hour
+	t.Cleanup(func() { roomLook = was })
+	for range 2 {
+		synctest.Test(t, func(t *testing.T) {
+			release, err := claudeRoom.take(context.Background(), "a run in a bubble")
+			if err != nil {
+				t.Fatal(err)
+			}
+			release(false)
+		})
+	}
+	for _, wake := range []struct {
+		name string
+		// in runs in a bubble while an ask waits outside it, and says
+		// whether it let the room held go
+		in func(hold func(bool)) bool
+	}{
+		{"release", func(hold func(bool)) bool { hold(false); return true }},
+		{"nudge", func(func(bool)) bool { claudeRoom.nudge(); return false }},
+	} {
+		hold, err := claudeRoom.take(context.Background(), "a run holding the room")
+		if err != nil {
+			t.Fatal(err)
+		}
+		answered := make(chan error, 1)
+		go func() {
+			// a wake lost: a named failure, not claudeRoomWait's 503
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			release, err := claudeRoom.take(ctx, "an ask waiting outside a bubble")
+			if err == nil {
+				release(false)
+			}
+			answered <- err
+		}()
+		w := roomWaitedOn(t)
+		var let bool
+		synctest.Test(t, func(t *testing.T) { let = wake.in(hold) })
+		select {
+		case <-w:
+		default:
+			t.Errorf("a %s in a bubble left the ask waiting outside it asleep", wake.name)
+		}
+		if !let {
+			hold(false)
+		}
+		if err := <-answered; err != nil {
+			t.Errorf("after a %s in a bubble, the ask waiting outside it: %v", wake.name, err)
+		}
+	}
+	hold, err := claudeRoom.take(context.Background(), "a run holding the room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if release, err := claudeRoom.take(ctx, "an ask in a bubble that gives up"); err == nil {
+			release(false)
+			t.Error("an ask in a bubble had room in a full room")
+		}
+	})
+	hold(false)
+}
+
+// Asks waiting for room together wait on one channel, and the release
+// that frees room wakes them all: the one that finds the room taken again
+// waits on the next channel, and the release after it wakes that. Neither
+// is left to roomLook's look again, which the bubble's clock would show.
+func TestClaudeRoomWakesEveryAsk(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	freshRoom(t, 1)
+	synctest.Test(t, func(t *testing.T) {
+		hold, err := claudeRoom.take(context.Background(), "a run holding the room")
+		if err != nil {
+			t.Fatal(err)
+		}
+		began := time.Now()
+		got := make(chan func(bool), 2)
+		for i := range 2 {
+			go func() {
+				release, err := claudeRoom.take(context.Background(), "ask "+strconv.Itoa(i))
+				if err != nil {
+					t.Error(err)
+					release = func(bool) {}
+				}
+				got <- release
+			}()
+			synctest.Wait()
+		}
+		hold(false)
+		synctest.Wait() // one has the room, the other waits again
+		(<-got)(false)
+		(<-got)(false)
+		if took := time.Since(began); took >= roomLook {
+			t.Errorf("the asks had room after %s: one slept until roomLook", took)
+		}
+	})
+	claudeRoom.mu.Lock()
+	defer claudeRoom.mu.Unlock()
+	if claudeRoom.freed != nil || claudeRoom.waiting != 0 || claudeRoom.live != 0 {
+		t.Errorf("left: a channel %v, %d waiting, %d live", claudeRoom.freed != nil, claudeRoom.waiting, claudeRoom.live)
+	}
+}
+
+// roomWaitedOn is the channel an ask waiting for room took, once one waits.
+func roomWaitedOn(t *testing.T) <-chan struct{} {
+	t.Helper()
+	for end := time.Now().Add(time.Minute); time.Now().Before(end); time.Sleep(time.Millisecond) {
+		claudeRoom.mu.Lock()
+		waiting, freed := claudeRoom.waiting, claudeRoom.freed
+		claudeRoom.mu.Unlock()
+		if waiting > 0 {
+			if freed == nil {
+				t.Error("an ask waits for room with nothing to wake it")
+			}
+			return freed
+		}
+	}
+	t.Error("no ask came to wait for room")
+	return nil
 }

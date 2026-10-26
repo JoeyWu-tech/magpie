@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/gateway"
@@ -337,6 +338,14 @@ func fakeHanako(t *testing.T, dir, token string, answer func(hanakoCall) (int, s
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	hanakoWrite(t, filepath.Join(dir, "server-info.json"), `{"pid":1,"port":`+u.Port()+`,"host":"127.0.0.1","token":"tok","version":"0.450.0"}`, 0o600)
+	// magpie waits for the fake as long as it takes to answer: hanakoProbe's
+	// 1.5s is for a server that isn't running and hanakoClient's 15s for one
+	// reloading every model, and the fake runs in the test binary, which a
+	// busy machine can leave unscheduled longer (#3673)
+	probe, client := hanakoProbe, hanakoClient
+	hanakoProbe = &http.Client{Timeout: 10 * time.Minute}
+	hanakoClient = &http.Client{Timeout: 10 * time.Minute}
+	t.Cleanup(func() { hanakoProbe, hanakoClient = probe, client })
 	return &calls, &mu
 }
 

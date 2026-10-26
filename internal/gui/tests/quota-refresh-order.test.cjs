@@ -18,14 +18,15 @@ const card = (user, used) => ({ provider: "claude", user, windows: [{ name: "7 d
 function page() {
   const context = vm.createContext({ Date, performance, setTimeout });
   vm.runInContext(`
-    let quotas = [], quotasAt = 0, quotaHist = [], quotasAskedAt = 0, view = "usage";
+    let quotas = [], quotasAt = 0, quotasKept = false, quotaHist = [], quotasAskedAt = 0, view = "usage";
+    const mode = "window"; // the tray panel ("panel") also keeps each reading (#3160)
     const requests = [], errors = [];
     const usageAcctKey = q => q.provider + "\\n" + (q.user || "").toLowerCase();
     const quotaCycleHolds = new Map(); // past cycles' estimates (#2009), cleared by a refresh
     const t = x => x;
     const calm = () => true;
     const document = { querySelectorAll: () => [] };
-    const el = () => ({ dataset: {}, classList: { add() {}, remove() {} }, setAttribute() {} });
+    const el = () => ({ dataset: {}, classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {} });
     function renderQuotas() {}
     function loadUpstream() {}
     function status(x) { errors.push(x); }

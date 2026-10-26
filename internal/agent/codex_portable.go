@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/yetone/magpie/internal/sessions"
@@ -34,6 +36,15 @@ func portCodexHome(dir string, d time.Duration) {
 	}
 	if len(res.Rewritten) > 0 || len(res.Held) > 0 {
 		log.Printf("codex rollouts: %d written portable, %d left while a Codex has them open", len(res.Rewritten), len(res.Held))
+	}
+	// by name: a thread whose latest compaction is one of these goes on
+	// only through magpie, which matters most as magpie lets Codex go
+	if len(res.Left) > 0 {
+		names := make([]string, len(res.Left))
+		for i, p := range res.Left {
+			names[i] = filepath.Base(p)
+		}
+		log.Printf("codex rollouts: %d keep a compaction of magpie's whose message is longer than it, so a history up to it goes on only through magpie: %s", len(res.Left), strings.Join(names, ", "))
 	}
 }
 

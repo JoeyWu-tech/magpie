@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -33,9 +34,24 @@ import (
 // rollout so written reads the same through magpie and goes on without it.
 //
 // Only magpie's compaction items change, in whichever line holds them (a
-// response_item, a compacted line's replacement_history); every other
-// line keeps its bytes, and the file its line count, mode and time. A
-// rollout is changed as Codex publishes a compressed one
+// response_item, a compacted line's replacement_history), such a line
+// written again whole; every other line keeps its bytes, and the file its
+// line count, mode and time. Every line keeps its length too, as Codex
+// keeps where its lines start and reads the file at those offsets: the
+// history_base of a fork, and of the rollout a rollback (thread/revert)
+// goes on in, and thread_history_1.sqlite's turns and the offset its
+// projection goes on from. A rollback of a thread ported shorter wouldn't
+// resume, "cutoff byte offset is past the source rollout" (ianchenx,
+// #3616). A message shorter than magpie's item is padded with spaces
+// before the line end, which a JSON reader skips. A line where it would
+// come out longer is kept as it is (Left), the rollout's other items
+// written where they fit: with Codex's summary prefix of 399 bytes, that
+// is a summary under about 1.1 to 1.3KB, by its text and the item's id,
+// or a longer one dense in quotes, backslashes or newlines, two bytes
+// each in the message. Codex sends only its latest compaction's item, so
+// a history whose latest is kept goes on only through magpie: the
+// thread's own, or a fork's or a rollback's cut before a later one.
+// A rollout is changed as Codex publishes a compressed one
 // (codex-rs/rollout/src/writer_lock.rs, try_acquire_for_publication):
 // under its home's coordination lock, and only when no Codex holds the
 // thread's writer lock, so never under a Codex that has the thread open.
@@ -67,8 +83,9 @@ func codexPortPath() string { return filepath.Join(settings.Dir(), "codex-portab
 
 // CodexPort is what a pass did.
 type CodexPort struct {
-	Rewritten []string // rollouts written portable
+	Rewritten []string // rollouts written portable, every item of magpie's in them now its message
 	Held      []string // rollouts with magpie's item a Codex holds, left for a later pass
+	Left      []string // rollouts keeping an item of magpie's whose message is longer than it, their other items written where they fit
 	Done      bool     // every rollout due was looked at
 }
 
@@ -140,7 +157,7 @@ func PortCodexRollouts(ctx context.Context, home string) (CodexPort, error) {
 			pending = append(pending, due[i:]...)
 			break
 		}
-		changed, err := portRollout(ctx, home, p)
+		written, kept, err := portRollout(ctx, home, p)
 		switch {
 		case errors.Is(err, errRolloutHeld):
 			res.Held = append(res.Held, p)
@@ -152,7 +169,9 @@ func PortCodexRollouts(ctx context.Context, home string) (CodexPort, error) {
 				break
 			}
 			log.Printf("codex rollout %s: %v", p, err)
-		case changed:
+		case kept:
+			res.Left = append(res.Left, p)
+		case written:
 			res.Rewritten = append(res.Rewritten, p)
 		}
 		if !res.Done {
@@ -204,25 +223,31 @@ func codexThreadOf(name string) string {
 
 var magpieMark = []byte(codexsummary.Mark)
 
+// A test replaces this with a port that changes a line's length, to see
+// the rollout left as it is.
+var portedLine = portLine
+
 // portRollout writes the rollout at path portable, if it has magpie's
-// compaction item, and says whether it did.
-func portRollout(ctx context.Context, home, path string) (bool, error) {
+// compaction item, and says whether it did, and whether it kept a line
+// with magpie's item as it is, the item's message being longer (portLine's
+// long): the rest of the rollout is written all the same.
+func portRollout(ctx context.Context, home, path string) (written, kept bool, err error) {
 	thread := codexThreadOf(filepath.Base(path))
 	if thread == "" {
-		return false, nil
+		return false, false, nil
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	in, err := openLines(path)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	defer in.Close()
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".magpie-"+filepath.Base(path)+"-*")
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	done := false
 	defer func() {
@@ -235,51 +260,57 @@ func portRollout(ctx context.Context, home, path string) (bool, error) {
 	var z *zstd.Encoder
 	if packed(path) {
 		if z, err = zstd.NewWriter(tmp); err != nil {
-			return false, err
+			return false, false, err
 		}
 		w = z
 	}
 	bw := bufio.NewWriterSize(w, 64<<10)
 	br := bufio.NewReaderSize(in, 64<<10)
 	changed := false
+	var read, wrote int64
 	for n := 0; ; n++ {
 		if n%4096 == 0 && ctx.Err() != nil {
-			return false, ctx.Err()
+			return false, false, ctx.Err()
 		}
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
-			out, ok := portLine(line)
-			changed = changed || ok
+			out, ok, long := portedLine(line)
+			changed, kept = changed || ok, kept || long
+			read, wrote = read+int64(len(line)), wrote+int64(len(out))
 			if _, werr := bw.Write(out); werr != nil {
-				return false, werr
+				return false, false, werr
 			}
 		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 	}
 	if !changed {
-		return false, nil
+		return false, kept, nil
+	}
+	// every line where Codex has it, or nothing is written
+	if wrote != read {
+		return false, false, fmt.Errorf("%d bytes written for its %d", wrote, read)
 	}
 	if err := bw.Flush(); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if z != nil {
 		if err := z.Close(); err != nil {
-			return false, err
+			return false, false, err
 		}
 	}
 	if err := tmp.Chmod(fi.Mode().Perm()); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if err := steady.Sync(tmp); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if err := tmp.Close(); err != nil {
-		return false, err
+		return false, false, err
 	}
 	in.Close()
 	os.Chtimes(tmp.Name(), fi.ModTime(), fi.ModTime())
@@ -290,39 +321,42 @@ func portRollout(ctx context.Context, home, path string) (bool, error) {
 	locks := filepath.Join(home, "thread-writer-locks")
 	unlock, held := filelock.Lock(filepath.Join(locks, ".coordination.lock"), filelock.Wait)
 	if !held {
-		return false, errRolloutHeld
+		return false, false, errRolloutHeld
 	}
 	defer unlock()
 	if lf, err := os.OpenFile(filepath.Join(locks, thread+".lock"), os.O_RDWR, 0); err == nil {
 		got, err := filelock.TryLock(lf)
 		if err != nil || !got {
 			lf.Close()
-			return false, errRolloutHeld
+			return false, false, errRolloutHeld
 		}
 		defer func() { filelock.Unlock(lf); lf.Close() }()
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return false, errRolloutHeld
+		return false, false, errRolloutHeld
 	}
 	// written to since it was read: a Codex had it after all
 	if now, err := os.Stat(path); err != nil || now.Size() != fi.Size() || !now.ModTime().Equal(fi.ModTime()) {
-		return false, errRolloutHeld
+		return false, false, errRolloutHeld
 	}
 	if err := steady.Rename(tmp.Name(), path); err != nil {
-		return false, err
+		return false, false, err
 	}
 	done = true
-	return true, nil
+	return true, kept, nil
 }
 
 // portLine is a rollout line with each of magpie's compaction items in it
-// written as the message it stands for; any other line as it is, byte for
-// byte. One of magpie's items whose summary can't be read is left out of
-// a list (and its entry of replacement_history_metadata with it), as the
+// written as the message it stands for, in the line's own length; any
+// other line as it is, byte for byte. A line written shorter is padded
+// with spaces before its line end; one that would come out longer is
+// given as it is, with long set, as writing it would move every line after
+// it. One of magpie's items whose summary can't be read is left out of a
+// list (and its entry of replacement_history_metadata with it), as the
 // gateway leaves it out; a line that is one alone stays as it is, as
 // leaving a line out would move every line after it.
-func portLine(line []byte) ([]byte, bool) {
+func portLine(line []byte) (_ []byte, changed, long bool) {
 	if !bytes.Contains(line, magpieMark) {
-		return line, false
+		return line, false, false
 	}
 	body := bytes.TrimRight(line, "\r\n")
 	end := line[len(body):]
@@ -330,19 +364,24 @@ func portLine(line []byte) ([]byte, bool) {
 	d.UseNumber()
 	var v any
 	if d.Decode(&v) != nil || d.More() {
-		return line, false
+		return line, false, false
 	}
-	v, changed, _ := portValue(v)
+	v, changed, _ = portValue(v)
 	if !changed {
-		return line, false
+		return line, false, false
 	}
 	var buf bytes.Buffer
 	e := json.NewEncoder(&buf)
 	e.SetEscapeHTML(false)
 	if e.Encode(v) != nil {
-		return line, false
+		return line, false, false
 	}
-	return append(bytes.TrimRight(buf.Bytes(), "\n"), end...), true
+	out := bytes.TrimRight(buf.Bytes(), "\n")
+	if len(out) > len(body) {
+		return line, false, true
+	}
+	out = append(out, bytes.Repeat([]byte(" "), len(body)-len(out))...)
+	return append(out, end...), true, false
 }
 
 // portValue is v with magpie's compaction items in it written as their

@@ -216,21 +216,19 @@ type inst struct {
 	m     *mw
 	rt    *moejs.Runtime
 	timer *time.Timer
-	mu    sync.Mutex
-	armed bool // a call is running, which the timer may stop
-	fired bool
-	run   *Run // the request it serves
+	// stopped is the timer's func's word that it has given its interrupt
+	stopped chan struct{}
+	run     *Run // the request it serves
 }
 
+// afterFunc is time.AfterFunc; a test holds the func it runs.
+var afterFunc = time.AfterFunc
+
 func (m *mw) newInst() (*inst, error) {
-	in := &inst{m: m, rt: moejs.NewRuntime(moejs.Options{})}
-	in.timer = time.AfterFunc(time.Hour, func() {
-		in.mu.Lock()
-		if in.armed {
-			in.fired = true
-			in.rt.Interrupt(errTimeout)
-		}
-		in.mu.Unlock()
+	in := &inst{m: m, rt: moejs.NewRuntime(moejs.Options{}), stopped: make(chan struct{}, 1)}
+	in.timer = afterFunc(time.Hour, func() {
+		in.rt.Interrupt(errTimeout)
+		in.stopped <- struct{}{}
 	})
 	in.timer.Stop()
 	if err := in.rt.SetGlobal("console", in.console()); err != nil {
@@ -238,7 +236,7 @@ func (m *mw) newInst() (*inst, error) {
 	}
 	in.arm(loadLimit)
 	err := in.rt.Load(m.mod)
-	if in.disarm() {
+	if in.disarm() && err != nil {
 		err = errTimeout
 	}
 	if err != nil {
@@ -260,33 +258,30 @@ func (m *mw) put(in *inst) {
 	m.pool.Put(in)
 }
 
-func (in *inst) arm(d time.Duration) {
-	in.mu.Lock()
-	in.armed, in.fired = true, false
-	in.mu.Unlock()
-	in.timer.Reset(d)
-}
+func (in *inst) arm(d time.Duration) { in.timer.Reset(d) }
 
-// disarm ends what arm began, and says whether the timer stopped it.
+// disarm ends what arm began, and says whether its time ran out. No
+// interrupt outlives it: the runtime has one timer for all its calls, and
+// a func that began as one call's time ran out went on to stop the next
+// call, though that one had time left (#3742). Stop doesn't wait for a
+// func that has begun, so disarm does, then clears what it left.
 func (in *inst) disarm() bool {
-	in.mu.Lock()
-	in.armed = false
-	fired := in.fired
-	in.mu.Unlock()
-	in.timer.Stop()
-	if fired {
-		in.rt.ClearInterrupt()
+	if in.timer.Stop() {
+		return false
 	}
-	return fired
+	<-in.stopped
+	in.rt.ClearInterrupt()
+	return true
 }
 
 // call calls h with the time it has, and settles the promise an async
 // hook returns: there is nothing for one to wait on, so it has settled by
 // the time the call returns, unless it waits on a promise that never does.
+// A call that finished as its time ran out keeps what it returned.
 func (in *inst) call(h moejs.Hook, limit time.Duration, args ...moejs.Value) (moejs.Value, error) {
 	in.arm(limit)
 	v, err := in.rt.Call(h, args...)
-	if in.disarm() {
+	if in.disarm() && err != nil {
 		err = errTimeout
 	}
 	if err != nil {

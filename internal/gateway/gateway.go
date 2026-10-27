@@ -6072,7 +6072,8 @@ func wrongEndpoint(status int, body []byte) bool {
 	if status < 400 || status >= 500 {
 		return false
 	}
-	msg := strings.ToLower(string(body))
+	// the words are matched decoded, too (#1669)
+	msg := strings.ToLower(string(wordsOf(body)))
 	for _, phrase := range []string{
 		"not a chat model",
 		"not supported in the v1/chat/completions",
@@ -6099,6 +6100,11 @@ func wrongEndpoint(status int, body []byte) bool {
 		// "gpt-6.1-sol requires Responses for tool calls; this account
 		// only supports Chat Completions")
 		"requires responses",
+		// a relay that says it in Chinese (#3766, char1eslu: AgentRouter's
+		// "模型 gpt-5.6-sol 不支持 /v1/chat/completions 接口，请改用
+		// /v1/responses（OpenAI Responses API）。")
+		"不支持 /v1/chat/completions 接口",
+		"改用 /v1/responses",
 	} {
 		if strings.Contains(msg, phrase) {
 			return true
@@ -6149,8 +6155,8 @@ func wrongAPINote(p provider.Provider, model string, res *http.Response, body []
 // with what was asked, on OpenAI's Responses API: where a provider has no
 // URL for it, wrongAPINote says to set one.
 func asksResponses(body []byte) bool {
-	msg := strings.ToLower(string(body))
-	for _, phrase := range []string{"requires responses", "use v1/responses", "use /v1/responses", "only supported in v1/responses", "only supported in /v1/responses"} {
+	msg := strings.ToLower(string(wordsOf(body)))
+	for _, phrase := range []string{"requires responses", "use v1/responses", "use /v1/responses", "only supported in v1/responses", "only supported in /v1/responses", "改用 /v1/responses"} {
 		if strings.Contains(msg, phrase) {
 			return true
 		}

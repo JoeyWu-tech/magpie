@@ -244,6 +244,14 @@ type Request struct {
 	// Anthropic upstream: a relay that serves only Claude Code turns a
 	// request without it away (#359).
 	Metadata json.RawMessage
+	// ImageConfig is a Gemini client's generationConfig.imageConfig, the
+	// size and shape it asks an image model to draw at (imageSize,
+	// aspectRatio, and Vertex AI's fields beside them), which goes on as
+	// it was sent when the request is built again for an upstream that
+	// speaks Gemini, inside Code Assist's envelope too
+	// (buildCodeAssistSent). Left out, the picture came back at the
+	// model's default size (#3820). No other API is known to take it.
+	ImageConfig json.RawMessage
 	// Safeguards are the caller's safety context, opaque to the gateway.
 	Safeguards    json.RawMessage
 	SafeguardBeta string

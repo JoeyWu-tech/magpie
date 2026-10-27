@@ -68,18 +68,35 @@ async function open(engine, lang, width, tab, posted, st, t, touch = false) {
 
 const settle = (page) => page.evaluate(() => new Promise((ok) => setTimeout(ok, 80)));
 // brought out from under the header and the foot by the reader's wheel, as
-// code's scrolls are put back, till the pointer at its middle is on it
+// code's scrolls are put back, till the pointer at its middle is on it.
+// Each wheel's scroll lands before the option is looked at again: WebKit's
+// glides on for some 200ms (a wheel of 150px is at 9, 111, 142, 149 and
+// 150 by its frames), and a box read on the way was pressed where the
+// option had been, off it (#3922)
 async function reveal(page, loc) {
   for (let i = 0; i < 40; i++) {
     const b = await loc.boundingBox();
     const h = page.viewportSize().height;
     if (b && await loc.evaluate((o, [x, y]) => o.contains(document.elementFromPoint(x, y)), mid(b))) return b;
     await page.mouse.move(page.viewportSize().width / 2, h / 2);
+    const was = await page.evaluate(() => document.getElementById("view-settings").scrollTop);
     await page.mouse.wheel(0, b && b.y < h / 2 ? -150 : 150);
-    await page.waitForTimeout(60);
+    await landed(page, was);
   }
   throw new Error("could not bring the option into view");
 }
+// landed: Settings' view moved from where it was and then held still for
+// three frames in turn, or didn't move in a second (it is at its end)
+const landed = (page, was) => page.evaluate((was) => new Promise((ok) => {
+  const v = document.getElementById("view-settings"), t0 = performance.now();
+  let last = v.scrollTop, still = 0;
+  const frame = () => {
+    still = v.scrollTop === last ? still + 1 : 0;
+    last = v.scrollTop;
+    if (last !== was ? still >= 3 : performance.now() - t0 > 1000) ok(); else requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}), was);
 const mid = (b) => [b.x + b.width / 2, b.y + b.height / 2];
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {

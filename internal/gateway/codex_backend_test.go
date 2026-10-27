@@ -1162,6 +1162,38 @@ func TestCodexOwnModelLogsEffort(t *testing.T) {
 	}
 }
 
+// #3918: Codex with reasoning_effort_override on keeps a GPT-6
+// conversation's first effort at the top and says each change as a
+// configuration_update, which the ChatGPT backend reasons at: a turn on
+// Codex's own model logs the update's effort, and goes as Codex sent it.
+func TestCodexOwnModelLogsEffortUpdate(t *testing.T) {
+	setup(t, provider.Chat, &fake{t: t})
+	var got []byte
+	chatgpt(t, func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		w.Header()["Content-Type"] = nil
+		io.WriteString(w, sse(`data: {"type":"response.completed","response":{"id":"r1","usage":{"input_tokens":9,"output_tokens":2}}}`))
+	})
+	const update = `{"type":"configuration_update","reasoning":{"effort":"xhigh"}}`
+	s := New()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", CodexPath+"/responses", strings.NewReader(`{"model":"gpt-6.1-sol","stream":true,"reasoning":{"effort":"low","summary":"auto"},"input":[`+
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"a"}]},`+
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"reply 1"}]},`+
+		update+`,{"type":"message","role":"user","content":[{"type":"input_text","text":"b"}]}]}`))
+	req.Header.Set("Authorization", "Bearer chatgpt-token")
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 || !strings.Contains(string(got), update) || !strings.Contains(string(got), `"reasoning":{"effort":"low","summary":"auto"}`) {
+		t.Fatalf("%d %s, sent %s", rec.Code, rec.Body, got)
+	}
+	if u := usage.Load(time.Time{}); len(u) != 1 || u[0].Effort != "xhigh" {
+		t.Errorf("usage %+v", u)
+	}
+	if rs := s.Trace(t.Context(), 0, 0).Routes; len(rs) != 1 || rs[0].Effort != "xhigh" || rs[0].Tries[0].Effort != "xhigh" {
+		t.Errorf("trace %+v", rs)
+	}
+}
+
 // A Codex that reaches magpie for account failover alone, not connected to
 // it, is handed only its own models, and an ETag that is neither the full
 // list's nor contains it, so moving between the two has Codex ask again

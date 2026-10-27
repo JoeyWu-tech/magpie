@@ -655,10 +655,17 @@ func withEffort(proto provider.Protocol, body []byte, effort string) []byte {
 // requestEffort is the reasoning a request asks its model for, in its own
 // API's words: reasoning_effort, reasoning.effort, or — for Anthropic, when
 // it asks to think — output_config's effort or thinking's budget as the
-// level it is nearest. "" when it asks for none.
+// level it is nearest. A Responses request's turn asks for its last
+// configuration_update item's effort where its input has one
+// (updatedEffort, #3918). "" when it asks for none.
 func requestEffort(proto provider.Protocol, body []byte) string {
+	if proto == provider.Responses {
+		if e, ok := updatedEffort(body); ok {
+			return e
+		}
+	}
 	if proto != provider.Anthropic {
-		return bodyEffort(proto, body)
+		return topEffort(proto, body)
 	}
 	var v struct {
 		Thinking *struct {
@@ -679,9 +686,15 @@ func requestEffort(proto provider.Protocol, body []byte) string {
 }
 
 // sentEffort is the reasoning a request goes to model at: what it asks
-// for, fitted to the model's levels as it is fitted on the way out.
-func sentEffort(proto provider.Protocol, body []byte, p provider.Provider, model string) string {
+// for, fitted to the model's levels as it is fitted on the way out. A
+// Responses request's configuration_update items set it at p only when
+// they reach p (updatesGoTo); left out on the way, the effort at the top
+// is the one sent.
+func sentEffort(proto provider.Protocol, body []byte, p provider.Provider, model string, in http.Header) string {
 	e := requestEffort(proto, body)
+	if proto == provider.Responses && !updatesGoTo(p, in) {
+		e = topEffort(proto, body)
+	}
 	if e == "" {
 		return ""
 	}
@@ -798,11 +811,12 @@ func withinLevels(want string, levels []string) string {
 }
 
 // agentEffort is the reasoning level a request asks for in its own API's
-// words: Chat's and Responses' as the agent named it (minimal and none
-// kept), Anthropic's as requestEffort reads it. "" when it names none.
+// words: Chat's and Responses' as the agent named it at the top (minimal
+// and none kept), where withEffort writes the level it is fitted to,
+// Anthropic's as requestEffort reads it. "" when it names none.
 func agentEffort(proto provider.Protocol, body []byte) string {
 	if proto == provider.Anthropic {
 		return requestEffort(proto, body)
 	}
-	return strings.ToLower(strings.TrimSpace(bodyEffort(proto, body)))
+	return strings.ToLower(strings.TrimSpace(topEffort(proto, body)))
 }

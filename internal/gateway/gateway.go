@@ -2020,6 +2020,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		return g.Ruled() || slices.ContainsFunc(m.Via, provider.Group.Ruled)
 	}) {
 		if req, err := parse(from, body); err == nil {
+			if from == provider.Responses {
+				if e, ok := updatedEffort(body); ok {
+					// the rules go by the effort the turn asks, which a
+					// Responses client's configuration_update items move
+					// from the one at the top the parse reads (#3918)
+					req.Effort, req.Thinking, req.ThinkOff = effortOf(e), true, strings.EqualFold(strings.TrimSpace(e), "none")
+				}
+			}
 			ruleReq, ruleAt, words = req, ruleKey(g, r.Header, req), firstWords(req)
 		}
 	}
@@ -2735,7 +2743,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			attemptBody, picked = withoutReasoningAsk(from, attemptBody), false
 		}
 		// the reasoning the model is asked for, whoever chose it
-		sent = sentEffort(from, attemptBody, c.p, c.model)
+		sent = sentEffort(from, attemptBody, c.p, c.model, r.Header)
 		if !takesEffort(c, sent) {
 			if j := effortMate(cands[i+1:], c, sent); j >= 0 {
 				// its plan doesn't take this level, which another account
@@ -4581,7 +4589,7 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	// permission check asks "none", which Command Code turns away; and
 	// reasoning off at a level the model turned away before (below), at its
 	// lowest
-	asked := bodyEffort(proto, body)
+	asked := topEffort(proto, body)
 	effort := fitFor(p, model, asked)
 	if offEffort(effort) && s.turnedAway(p, model, effort, proto) {
 		effort = onEffort(p, model)
@@ -4838,7 +4846,7 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 		}
 	}
 	offRetried := false
-	if e := bodyEffort(proto, body); res.StatusCode == http.StatusBadRequest && (e == "none" || e == "minimal" || proto == provider.Chat && hasReasoningDisabled(body)) {
+	if e := topEffort(proto, body); res.StatusCode == http.StatusBadRequest && (e == "none" || e == "minimal" || proto == provider.Chat && hasReasoningDisabled(body)) {
 		// A model can refuse reasoning turned off. If it names its levels,
 		// or Gemini the level it hasn't, try its lowest, and from then on;
 		// if OpenRouter requires reasoning, leave the level to it.
@@ -4867,7 +4875,7 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 			}
 		}
 	}
-	if e := bodyEffort(proto, body); res.StatusCode == http.StatusBadRequest && proto != provider.Anthropic && !offRetried && (e == "" || offEffort(e)) {
+	if e := topEffort(proto, body); res.StatusCode == http.StatusBadRequest && proto != provider.Anthropic && !offRetried && (e == "" || offEffort(e)) {
 		// no reasoning effort, or none, turned away by a model that needs
 		// one (a Codex title on a model other than its own asks none,
 		// cybercaius on Discord): asked again once at its lowest, low
@@ -4885,7 +4893,7 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 			}
 		}
 	}
-	if proto == provider.Chat && res.StatusCode == http.StatusBadRequest && bodyEffort(proto, body) != "none" {
+	if proto == provider.Chat && res.StatusCode == http.StatusBadRequest && topEffort(proto, body) != "none" {
 		// tools with reasoning refused on chat, and no Responses API to
 		// take them to: asked again without reasoning (#176)
 		b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
@@ -7116,9 +7124,13 @@ var otherOffNamed = map[string]*regexp.Regexp{
 // errors listing levels quote them (in JSON a double quote comes escaped).
 var noneQuoted = regexp.MustCompile(`(?i)['"]none\\?['"]`)
 
-// bodyEffort is the reasoning effort a Chat or Responses request asks for,
-// or an Anthropic one in its output_config.
-func bodyEffort(proto provider.Protocol, body []byte) string {
+// topEffort is the reasoning effort at the top of a Chat or Responses
+// request, or of an Anthropic one in its output_config: the field magpie's
+// own effort is written to (withBodyEffort, withFixedEffort) and read back
+// from by its checks. A Responses request whose input carries
+// configuration_update items asks its turn at the last one's instead
+// (requestEffort), the top keeping the conversation's first.
+func topEffort(proto provider.Protocol, body []byte) string {
 	var v struct {
 		ReasoningEffort string `json:"reasoning_effort"`
 		Reasoning       *struct {

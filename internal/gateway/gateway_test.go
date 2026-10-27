@@ -898,7 +898,7 @@ func TestPassthroughMinimalRefusedNoneTaken(t *testing.T) {
 		}{{"minimal", "low", 2}, {"minimal", "low", 1}, {"none", "none", 1}} {
 			f.calls = 0
 			code, body := postTo(t, srv, c.path, fmt.Sprintf(c.body, turn.effort))
-			if code != 200 || f.calls != turn.calls || bodyEffort(c.proto, f.got) != turn.sent {
+			if code != 200 || f.calls != turn.calls || topEffort(c.proto, f.got) != turn.sent {
 				t.Fatalf("%s turn %d at %s: %d %s after %d calls, last sent %s", c.proto, i+1, turn.effort, code, body, f.calls, f.got)
 			}
 		}

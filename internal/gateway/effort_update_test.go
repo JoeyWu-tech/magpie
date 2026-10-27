@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/provider"
+	"github.com/yetone/magpie/internal/usage"
 )
 
 // effortTurns are a thread's requests as an agent sends them: the
@@ -220,5 +222,103 @@ func TestEffortChangeOtherVendor(t *testing.T) {
 	effort, _, input := sentShape(t, f.got)
 	if effort != "high" || strings.Join(input, ",") != "user,assistant,user" {
 		t.Fatalf("sent %q %v", effort, input)
+	}
+}
+
+// ompTurn is omp's second turn of a GPT-6 conversation it began at low
+// and has set to high since (#3918): the first effort stays at the top,
+// and the change goes as a configuration_update before the user message
+// it came with (planStableOpenAIEffort, omp's
+// openai-configuration-update.ts).
+func ompTurn(model string) string {
+	return `{"model":"` + model + `","stream":true,"prompt_cache_key":"omp-1","reasoning":{"effort":"low"},"input":[` +
+		`{"role":"user","content":[{"type":"input_text","text":"a"}]},` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"reply 1"}]},` +
+		`{"type":"configuration_update","reasoning":{"effort":"high"}},` +
+		`{"role":"user","content":[{"type":"input_text","text":"b"}]}]}`
+}
+
+// #3918 (lghnb): omp on magpie's codex/gpt-6.1-sol, a ChatGPT account,
+// showed high while Routing said the model answered at low, the effort
+// omp keeps at the top. The backend reasons at the update's effort, so
+// the route, its try and the usage say that one, and the request goes on
+// as omp sent it.
+func TestClientEffortUpdateIsTheTurns(t *testing.T) {
+	f := &fake{t: t, ctype: "none", reply: effortReply}
+	effortCodexAccount(t, f)
+	s := New()
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/responses", strings.NewReader(ompTurn("codex/gpt-6.1-sol"))))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "pong") {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if effort, _, input := sentShape(t, f.got); effort != "low" || strings.Join(input, ",") != "user,assistant,u:high,user" {
+		t.Errorf("sent at %q, input %v", effort, input)
+	}
+	if r := lastRoute(s); r.Effort != "high" || len(r.Tries) != 1 || r.Tries[0].Effort != "high" {
+		t.Errorf("route at %q, tries %+v", r.Effort, r.Tries)
+	}
+	if u := usage.Load(time.Time{}); len(u) != 1 || u[0].Effort != "high" {
+		t.Errorf("usage %+v", u)
+	}
+}
+
+// #3918: a client's configuration_update sets the turn's effort where it
+// reaches the upstream: OpenAI's API, and a relay that takes Codex's
+// requests as Codex sent them. Anyone else is sent the request without it
+// (forVendor), or built in its own API from the effort at the top, and
+// reasons at that one. The route keeps what the client asked; the try and
+// the usage what the model was sent at.
+func TestClientEffortUpdateByUpstream(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	for _, p := range []provider.Provider{
+		{ID: "oai", Name: "OpenAI", Key: "sk-k", Responses: "https://api.openai.com/v1", Models: []string{"gpt-6.1-sol"}},
+		{ID: "asis", Name: "Relay as sent", Key: "k", CodexAsSent: true, Responses: "https://asis.test/v1", Models: []string{"gpt-6.1-sol"}},
+		{ID: "relay", Name: "Relay", Key: "k", Responses: "https://relay.test/v1", Models: []string{"gpt-6.1-sol"}},
+		{ID: "chatonly", Name: "Chat only", Key: "k", Chat: "https://chat.test/v1", Models: []string{"gpt-6.1-sol"}},
+	} {
+		if err := provider.Save(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	up := &programsUpstream{}
+	s := New()
+	s.client = &http.Client{Transport: up}
+	codex := http.Header{"User-Agent": {"codex_cli_rs/0.150.0 (Mac OS 26.2.0; arm64)"}, "Originator": {"codex_cli_rs"}}
+	for _, c := range []struct {
+		name, model string
+		h           http.Header
+		sent        string // the effort the try went at
+		update      bool   // the item reached the upstream
+	}{
+		{"openai", "oai/gpt-6.1-sol", nil, "high", true},
+		{"relay as sent, from codex", "asis/gpt-6.1-sol", codex, "high", true},
+		{"relay as sent, not from codex", "asis/gpt-6.1-sol", nil, "low", false},
+		{"relay", "relay/gpt-6.1-sol", codex, "low", false},
+		{"chat upstream", "chatonly/gpt-6.1-sol", nil, "low", false},
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(ompTurn(c.model)))
+		for k, vs := range c.h {
+			req.Header[k] = vs
+		}
+		s.Handler().ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Errorf("%s: %d %s", c.name, rec.Code, rec.Body)
+			continue
+		}
+		_, sent := up.last(t)
+		r := lastRoute(s)
+		if r.Effort != "high" || len(r.Tries) != 1 || r.Tries[0].Effort != c.sent || strings.Contains(string(sent), `"configuration_update"`) != c.update {
+			t.Errorf("%s: route at %q, tries %+v; sent %s", c.name, r.Effort, r.Tries, sent)
+		}
+	}
+	var got []string
+	for _, rec := range usage.Load(time.Time{}) {
+		got = append(got, rec.Effort)
+	}
+	if strings.Join(got, ",") != "high,high,low,low,low" {
+		t.Errorf("usage efforts %q", got)
 	}
 }

@@ -2733,7 +2733,7 @@ var keepsSeal = map[string]bool{`"reasoning"`: true, `"compaction"`: true, `"com
 // ChatGPT backend get it as it came; so does anything else, byte for byte,
 // when none of them is in it.
 func forVendor(p provider.Provider, body []byte) []byte {
-	if p.Account != nil && p.Account.Agent == "codex" || strings.HasSuffix(p.Host(), "openai.com") {
+	if keepsOpenAIParts(p) {
 		return body
 	}
 	if !slices.ContainsFunc(openaiOnly, func(k []byte) bool { return bytes.Contains(body, k) }) || !forVendorChanges(body) {
@@ -2803,6 +2803,13 @@ func forVendor(p provider.Provider, body []byte) []byte {
 		return body
 	}
 	return nb
+}
+
+// keepsOpenAIParts says p is sent the parts of a Responses request only
+// OpenAI takes as they came (forVendor): the ChatGPT backend and OpenAI's
+// API.
+func keepsOpenAIParts(p provider.Provider) bool {
+	return p.Account != nil && p.Account.Agent == "codex" || strings.HasSuffix(p.Host(), "openai.com")
 }
 
 // keepsAccessPrograms says a Responses request to p goes with its top-level

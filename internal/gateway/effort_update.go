@@ -25,6 +25,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -223,6 +224,41 @@ func itemsSum(items []json.RawMessage) [sha256.Size]byte {
 	var s [sha256.Size]byte
 	h.Sum(s[:0])
 	return s
+}
+
+// updatedEffort is the reasoning effort a Responses request's own
+// configuration_update items leave its turn at: the last one's in its
+// input that names one (#3918). omp keeps a GPT-6 conversation's first
+// effort at the top and says each later change as such an item, as Codex
+// does with its reasoning_effort_override on, and the upstream reasons at
+// the last one ("applies until another configuration_update input item
+// overrides it"). ok is false when the input has none: the effort at the
+// top (topEffort) is the turn's. Only a body naming the item is walked,
+// and its items aren't decoded (#1532).
+func updatedEffort(body []byte) (effort string, ok bool) {
+	if !bytes.Contains(body, []byte(`"configuration_update"`)) {
+		return "", false
+	}
+	inputItems(body, func(it []byte) bool {
+		if string(memberOrNil(it, "type")) != `"configuration_update"` {
+			return true
+		}
+		if e, str := stringBytes(memberOrNil(memberOrNil(it, "reasoning"), "effort")); str && len(e) > 0 {
+			effort, ok = string(e), true
+		}
+		return true
+	})
+	return effort, ok
+}
+
+// updatesGoTo says a Responses request's configuration_update items reach
+// p as the client sent them, for its turn to run at the last one's
+// effort: the ChatGPT backend and OpenAI's API (keepsOpenAIParts), and a
+// relay that takes Codex's requests as Codex sent them (codexAsSent).
+// forVendor leaves them out for anyone else, who runs the turn at the
+// effort at the top.
+func updatesGoTo(p provider.Provider, in http.Header) bool {
+	return keepsOpenAIParts(p) || codexAsSent(p, in)
 }
 
 func isUserItem(raw json.RawMessage) bool {

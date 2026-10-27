@@ -13,9 +13,9 @@ package provider
 //     it replaces the body's own.
 //   - ${sessionId} in a string value, at any depth, is the conversation's
 //     id: the session the agent names (its session header), else one
-//     magpie derives from the conversation's first user message — the same
-//     for every turn of it. A fixed string would put every session on one
-//     cache key.
+//     magpie derives from how the conversation opens (the gateway's
+//     conversationID), the same for every turn of it. A fixed string would
+//     put every session on one cache key.
 //   - The fields that carry the conversation, or that magpie must decide
 //     for routing and streaming to work (ExtraBodyReserved), can't be set:
 //     a save naming one is refused, and one written into the file by hand

@@ -6092,7 +6092,7 @@ $("#foldOff").onclick = () => {
 
 // One row per provider: logo, name, the agents pointed at it, key status.
 // Everything else lives in the editor, a dialog over the page.
-function renderProviders() {
+function renderProviders(quiet) {
   if (accountArranging || providerArranging) { accountRenderPending = true; return; }
   // Rebuilding the list empties the page for a moment, which clamps its
   // scroll to the top; put it back so closing the editor leaves the reader
@@ -6202,7 +6202,7 @@ function renderProviders() {
   keptIcons = null;
   markUpstream();
   view.scrollTop = top; // first: a closing dialog folds into its row where it is
-  if (dialog) openModal(dialog); else closeModal();
+  if (dialog) openModal(dialog, quiet); else closeModal();
 }
 
 // providerHandle is an on row's logo, which is also its handle (#499):
@@ -8624,7 +8624,7 @@ function holdModal(later) {
   // a scroll moves the marked element, not the dialog
   m.addEventListener("scroll", () => modalMark(modalHold.at), true);
 }
-function openModal(content) {
+function openModal(content, quiet) {
   const m = $("#modal"), d = m.firstElementChild;
   const fresh = m.hidden || m.classList.contains("out");
   const top = m.hidden ? 0 : d.querySelector(".ebody")?.scrollTop || 0;
@@ -8633,7 +8633,7 @@ function openModal(content) {
   const namesAt = names && { provider: names.dataset.provider, top: names.scrollTop };
   m.classList.remove("out");
   d.classList.remove("swap");
-  if (!fresh) { void d.offsetWidth; d.classList.add("swap"); } // content changed: a soft refresh, not a re-entrance
+  if (!fresh && !quiet) { void d.offsetWidth; d.classList.add("swap"); } // content changed: a soft refresh, not a re-entrance
   frame(content);
   // an editor that reads long text (a prompt's) takes a wider dialog
   d.classList.toggle("wide", content.classList.contains("wide"));
@@ -13260,7 +13260,7 @@ function loginUsageOf(agent) {
       .then((d) => { u.data = d || {}; }, () => { u.data = u.data || {}; })
       .finally(() => {
         u.at = Date.now(); u.loading = null;
-        if (providers?.providers.find((p) => p.id === editing)?.account?.agent === agent && !document.querySelector(".editor .rename-in, .editor input:focus, .signing.import textarea:focus")) renderProviders();
+        if (providers?.providers.find((p) => p.id === editing)?.account?.agent === agent && !document.querySelector(".editor .rename-in, .editor input:focus, .signing.import textarea:focus")) renderProviders(true);
       });
   }
   return u.data;

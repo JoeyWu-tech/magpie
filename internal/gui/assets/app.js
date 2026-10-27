@@ -6849,7 +6849,11 @@ addEventListener("pointerup", (e) => {
   addEventListener("click", seen, true);
   setTimeout(() => {
     removeEventListener("click", seen, true);
-    if (!clicked && b.isConnected) b.click();
+    if (clicked) return;
+    // drawn again since, as a draw that asks for its state draws once more
+    // with the answer (Settings' Browser access, #3922): its newest self
+    const now = b.isConnected ? b : [...document.querySelectorAll(".segs")].find((x) => segsWho(x) === p.who)?.querySelectorAll(":scope > .opt")[p.i];
+    now?.click();
   });
 }, true);
 

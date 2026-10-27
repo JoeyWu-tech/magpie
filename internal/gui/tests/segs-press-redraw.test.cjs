@@ -6,8 +6,11 @@
 // and nothing was saved. Pressed, redrawn and let go on the same option,
 // Lightweight mode → On is saved once; dragged off to another option, or to
 // the same option of another control, nothing is; a click with no redraw
-// is saved once. Every segs control on every Settings tab is pressed the
-// same way and its new self clicked once. Chromium and WebKit, in English,
+// is saved once. Pressed, redrawn, let go and redrawn again before its
+// click comes, as a draw that asks for its state draws once more with the
+// answer (Browser access, #3922), the newest On is saved once. Every segs
+// control on every Settings tab is pressed the same way and its new self
+// clicked once. Chromium and WebKit, in English,
 // Chinese, Japanese and German, in a wide and a narrow window, the API faked.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
@@ -147,6 +150,21 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.waitForTimeout(300);
         assert.deepEqual(saves(), [true, false], `posted ${JSON.stringify(posted)}`);
         assert.equal(await on(), w.off);
+
+        // pressed, redrawn, let go, and redrawn again before the click it
+        // set off comes, as Browser access is when its state's answer lands
+        // then (#3922): the newest On is clicked, once
+        await page.mouse.move(...mid(await reveal(page, opt("lightweightSegs", w.on))));
+        await page.mouse.down();
+        await page.evaluate(() => {
+          renderSettings();
+          addEventListener("pointerup", () => renderSettings(), { capture: true, once: true });
+        });
+        await page.mouse.up();
+        for (let i = 0; i < 40 && saves().length < 3; i++) await page.waitForTimeout(50);
+        await page.waitForTimeout(300);
+        assert.deepEqual(saves(), [true, false, true], `redrawn twice, posted ${JSON.stringify(posted)}`);
+        assert.equal(await on(), w.on);
         assert.deepEqual(errors, []);
       });
 

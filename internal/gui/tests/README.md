@@ -868,7 +868,10 @@ node --test --test-concurrency=1 internal/gui/tests/settings-sections.test.cjs i
 (`renderSettings()`, as a save's answer does) while the button is held and
 lets go on the same spot: Lightweight mode → On is posted once and shown on.
 Dragged off to the other option, or to the same option of another control,
-nothing is posted, and a plain click is posted once, not twice. It then
+nothing is posted, and a plain click is posted once, not twice. Drawn
+again once more after it is let go and before the click that sets off,
+as Browser access is when the answer to its state comes then (#3922),
+On is posted once. It then
 presses every option control on every Settings tab (49 in English, the
 warm-up, check-in, sync and local network ones included) the same way and
 checks that the control drawn in its place is clicked once on the same

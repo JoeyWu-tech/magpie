@@ -129,7 +129,9 @@
     pg: [PAGE, "Page", "Adds a page of its own to the sidebar. It runs shut off from the rest of magpie and can read only what its row lists"],
     pn: [PAGE, "Panels", "Adds panels to magpie's own pages. They run shut off from the rest of magpie and can read only what its row lists"],
   };
-  const kindOf = (l) => ({ middleware: "mw", agent: "ag", tools: "tl", page: "pg" })[l.kind] || "pv";
+  // a repository of gateway hooks alone ("hooks") runs in the gateway as
+  // middleware does, and is picked out with it (#3821)
+  const kindOf = (l) => ({ middleware: "mw", hooks: "mw", agent: "ag", tools: "tl", page: "pg" })[l.kind] || "pv";
   function kindChip(kind) {
     const [d, word, tip] = KINDS[kind];
     const c = el("span", "pm-chip kind " + kind);
@@ -530,7 +532,10 @@
     top.append(logo(l.icon || l.npm?.icon, false, kindOf(l)), who, go);
     const sum = el("p", "pm-sum", summary(l));
     const meta = el("div", "pm-meta");
-    meta.append(kindChip(kindOf(l)));
+    const kc = kindChip(kindOf(l));
+    // named as an installed one's row names it
+    if (l.kind === "hooks") kc.querySelector("span").textContent = t("Request hook");
+    meta.append(kc);
     if (l.github) meta.append(stars(l.github.stars));
     if (l.npm?.weekly) {
       const d = el("span", "pm-dl");

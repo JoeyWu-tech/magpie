@@ -830,6 +830,21 @@ func (a *Agent) reconnect(now map[string]string) (bool, error) {
 			return false, nil
 		}
 	}
+	// Codex signed in with ChatGPT is joined again first, as Connect joined
+	// it: its subagents' or memories' model on one of magpie's, put back
+	// alone, read as connected while its own model stayed off magpie, and
+	// its memories and [agents] model can't be set till magpie is in its
+	// config (#3868). One that can't join now is connected as at first,
+	// unless its model was one of magpie's, which routes it.
+	if a.Join != nil {
+		ok, err := a.Join()
+		if err != nil {
+			return true, err
+		}
+		if !ok && !slices.Contains(rec.Routed, a.Fields[0].Key) {
+			return false, nil
+		}
+	}
 	// the models on magpie first, as Connect sets them (setting Gemini
 	// CLI's model signs it in through magpie, which its sign-in field
 	// can't), then the rest that aren't so by then

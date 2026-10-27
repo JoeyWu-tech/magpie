@@ -160,6 +160,86 @@ func TestCodexConnectKeepsItsPick(t *testing.T) {
 	}
 }
 
+// Codex with its subagents or memories on one of magpie's, switched off and
+// on again, is as it was: joined again on its own model, its config and
+// those fields back (#3868, why8023). Put back alone, the subagents' model
+// read as connected with no openai_base_url, and the memories and [agents]
+// model couldn't be set at all. A Codex that switch-on left so gets out of
+// it by switching off and on again. On one of magpie's models it is joined
+// again too, beside its sign-in; on magpie API, which can't join, that model
+// takes it back.
+func TestCodexOffAndOnJoinsAgainWithItsHelpersOnMagpie(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		login  string // its sign-in field: "" ChatGPT, "api" magpie API
+		model  string // one of magpie's it is on, "" for its own gpt-5.5
+		fields []string
+		left   bool // as the switch-on before #3868 left it
+	}{
+		{"subagent model", "", "", []string{"subagent_model"}, false},
+		{"memories", "", "", []string{"memories"}, false},
+		{"subagents", "", "", []string{"subagent"}, false},
+		{"subagents' model and memories", "", "", []string{"subagent_model", "memories"}, false},
+		{"left unjoined", "", "", []string{"subagent_model"}, true},
+		{"on one of magpie's", "", "fake/m1", []string{"subagent_model", "memories"}, false},
+		{"magpie API", "api", "fake/m1", []string{"subagent_model", "memories"}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home, read := codexHome(t, `{"tokens":{"access_token":"x","id_token":"x.e30.x"}}`,
+				"model = \"gpt-5.5\"\nmodel_reasoning_effort = \"xhigh\"\n")
+			cx := codex(home)
+			if c.login != "" {
+				if err := cx.Apply("login", c.login); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := cx.Connect(); err != nil || cx.Joined() != (c.login == "") {
+				t.Fatalf("connect (%v), joined %v:\n%s", err, cx.Joined(), read())
+			}
+			if c.model != "" {
+				if err := cx.Apply("model", c.model); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, k := range c.fields {
+				if err := cx.Apply(k, "fake/m1"); err != nil || cx.Values()[k] != "fake/m1" {
+					t.Fatalf("%s on %q (%v)", k, cx.Values()[k], err)
+				}
+			}
+			cfg, joined, beside := read(), cx.Joined(), cx.Beside()
+			if err := cx.Disconnect(); err != nil {
+				t.Fatal(err)
+			}
+			if c.left {
+				// that switch-on: the record taken, the subagents' model put
+				// back, nothing else
+				forget(cx.ID+".reconnect", cx.ID+disconnectedKey)
+				if err := cx.Apply("subagent_model", "fake/m1"); err != nil {
+					t.Fatal(err)
+				}
+				if !cx.Wired() || cx.Joined() || strings.Contains(read(), "openai_base_url") {
+					t.Fatalf("not as #3868 found it (wired %v, joined %v):\n%s", cx.Wired(), cx.Joined(), read())
+				}
+				if err := cx.Disconnect(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			how, err := cx.ConnectHow()
+			if err != nil || how.How != "again" || read() != cfg || cx.Joined() != joined || cx.Beside() != beside {
+				t.Fatalf("on again (%+v, %v), joined %v and beside %v, were %v and %v:\n%s\nwas\n%s", how, err, cx.Joined(), cx.Beside(), joined, beside, read(), cfg)
+			}
+			for _, k := range c.fields {
+				if v := cx.Values()[k]; v != "fake/m1" {
+					t.Errorf("%s back on %q", k, v)
+				}
+			}
+			if d := cx.Drift(); d != nil {
+				t.Errorf("drift: %+v", d)
+			}
+		})
+	}
+}
+
 // The 「接入」 switch off and on again leaves the agent on the models it was
 // on (the owner: an agent remembers its last pick): Claude Code on a second
 // magpie model and its effort, not the one Connect would pick. One the user

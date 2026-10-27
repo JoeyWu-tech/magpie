@@ -365,6 +365,35 @@ func TestRuleEffortAndAgent(t *testing.T) {
 	}
 }
 
+// #3918: a rule on reasoning goes by the effort the turn asks, which a
+// Responses client's configuration_update moves from the one at the top
+// (omp's conversation begun at low and set to high since, or the other
+// way round).
+func TestRuleEffortReadsClientUpdate(t *testing.T) {
+	s, _, _ := ruled(t, provider.Rule{Use: "b/big", Effort: "high"})
+	for _, tc := range []struct {
+		top, update, want string
+		n                 int
+	}{
+		{"low", "high", "kb", 1},
+		{"high", "low", "ka", 0},
+	} {
+		body := `{"model":"group/r","reasoning":{"effort":"` + tc.top + `"},"input":[` +
+			`{"role":"user","content":[{"type":"input_text","text":"a"}]},` +
+			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"reply 1"}]},` +
+			`{"type":"configuration_update","reasoning":{"effort":"` + tc.update + `"}},` +
+			`{"role":"user","content":[{"type":"input_text","text":"b"}]}]}`
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+		req.Header.Set("x-session-id", "omp-"+tc.top)
+		s.Handler().ServeHTTP(rec, req)
+		r := lastRoute(s)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "from "+tc.want) || r.Rule == nil || r.Rule.N != tc.n {
+			t.Errorf("at %s, set to %s: %d %s %+v", tc.top, tc.update, rec.Code, rec.Body.String(), r.Rule)
+		}
+	}
+}
+
 // Every protocol an agent speaks, streaming or not, goes by the rules.
 func TestRuleEveryProtocol(t *testing.T) {
 	s, a, b := ruled(t, provider.Rule{Use: "b/big", Tokens: 20000})

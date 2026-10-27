@@ -238,6 +238,20 @@ func TestRequestEffort(t *testing.T) {
 		{provider.Chat, `{"model":"m"}`, ""},
 		{provider.Responses, `{"reasoning":{"effort":"xhigh","summary":"auto"}}`, "xhigh"},
 		{provider.Responses, `{"reasoning":{"summary":"auto"}}`, ""},
+		// #3918: the conversation's first effort at the top, each change
+		// since as a configuration_update, the last one the turn's
+		{provider.Responses, `{"reasoning":{"effort":"low"},"input":[{"role":"user","content":"a"},{"type":"configuration_update","reasoning":{"effort":"high"}},{"role":"user","content":"b"}]}`, "high"},
+		{provider.Responses, `{"reasoning":{"effort":"low"},"input":[{"role":"user","content":"a"},{"type":"configuration_update","reasoning":{"effort":"xhigh"}},{"role":"user","content":"b"},{"type":"configuration_update","reasoning":{"effort":"medium"}},{"role":"user","content":"c"}]}`, "medium"},
+		// changed inside a tool loop: after the call's output
+		{provider.Responses, `{"reasoning":{"effort":"medium"},"input":[{"role":"user","content":"a"},{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c1","output":"ok"},{"type":"configuration_update","reasoning":{"effort":"low"}}]}`, "low"},
+		{provider.Responses, `{"input":[{"type":"configuration_update","reasoning":{"effort":"high"}},{"role":"user","content":"a"}]}`, "high"},
+		// an item naming no effort, the word as a message or inside one, and
+		// another API's body change nothing
+		{provider.Responses, `{"reasoning":{"effort":"low"},"input":[{"type":"configuration_update","reasoning":{}},{"role":"user","content":"a"}]}`, "low"},
+		{provider.Responses, `{"reasoning":{"effort":"low"},"input":[{"type":"message","role":"user","content":"configuration_update"}]}`, "low"},
+		{provider.Responses, `{"reasoning":{"effort":"low"},"input":[{"role":"user","content":[{"type":"configuration_update","reasoning":{"effort":"high"}}]}]}`, "low"},
+		{provider.Responses, `{"reasoning":{"effort":"low"},"input":"configuration_update"}`, "low"},
+		{provider.Chat, `{"reasoning_effort":"low","input":[{"type":"configuration_update","reasoning":{"effort":"high"}}]}`, "low"},
 		{provider.Anthropic, `{"thinking":{"type":"adaptive"},"output_config":{"effort":"medium"}}`, "medium"},
 		{provider.Anthropic, `{"thinking":{"type":"enabled","budget_tokens":4096}}`, "low"},
 		{provider.Anthropic, `{"thinking":{"type":"disabled"},"output_config":{"effort":"high"}}`, ""},

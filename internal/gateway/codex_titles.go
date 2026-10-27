@@ -699,7 +699,7 @@ func codexSideEffort(body []byte, to string) []byte {
 	if provider.IsGroupRef(to) {
 		return body
 	}
-	e := bodyEffort(provider.Responses, body)
+	e := topEffort(provider.Responses, body)
 	if e != "" && !offEffort(e) {
 		return body
 	}

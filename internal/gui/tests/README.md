@@ -2079,6 +2079,13 @@ Chromium and WebKit with an isolated API fixture:
 node --test internal/gui/tests/account-arrange.test.cjs
 ```
 
+`key-rename-once.test.cjs` renames a provider's key in its editor and counts
+the page's own keys/rename requests (#3944): Escape keeps the name, typed over
+or not, and draws the editor once; Enter saves it with one request, and Enter
+again before the save answers sends no other. Chromium blurred the input as
+the redraw took it out, and the blur saved the name after Escape and sent
+Enter's twice. In Chromium and WebKit, English and Chinese.
+
 `routing-account-order.test.cjs` checks that Routing's live stage seats each
 provider's accounts and keys in the order its page lists them and a drag sets
 — the order the gateway tries them — not by name nor as one request weighed

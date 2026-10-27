@@ -734,11 +734,14 @@ func ownOf(f file) (own []Provider, picks map[string]Provider) {
 }
 
 // withPicks is the signed-in account a with what the user set on its
-// provider (pk, as providers.json keeps it): its models, routing, limits
-// and queue. The account the agent is signed in to gets them in All, and
-// each other account in use beside it in AlsoOn, so that every account of
-// the provider keeps the same settings (#1899: a second WorkBuddy AI
-// account queued 62s with the wait set to 1s).
+// provider (pk, as providers.json keeps it): its models, routing, limits,
+// queue and rests. The account the agent is signed in to gets them in All,
+// and each other account in use beside it in AlsoOn, so that every account
+// of the provider keeps the same settings (#1899: a second WorkBuddy AI
+// account queued 62s with the wait set to 1s). It is all that Save keeps
+// of an account too: a setting put back here is kept, and one that isn't
+// is no account's (accountApart in the test says why, field by field;
+// #3743: restCap was kept and never put back, so it changed nothing).
 func withPicks(a, pk Provider) Provider {
 	a.PickedFrom, a.Delisted = pk.PickedFrom, pk.Delisted
 	a.Models, a.Unlisted, a.Off, a.Fallback, a.Routing, a.Affinity, a.KeepLogin, a.KeepLoginAs, a.Contexts, a.Family = pk.Models, pk.Unlisted, pk.Off, pk.Fallback, pk.Routing, pk.Affinity, pk.KeepLogin, pk.KeepLoginAs, pk.Contexts, pk.Family
@@ -756,6 +759,13 @@ func withPicks(a, pk Provider) Provider {
 	// and what it bills against the official price (#819): an account's
 	// editor sets it as a key provider's does (PaulT on Discord, Codex)
 	a.PriceRate = pk.PriceRate
+	// how long it rests out of quota with no word of when, and the most a
+	// failure or a rate limit rests it (#3743, tmuer: its accounts went on
+	// resting 1, 2, 4, 8 and 16 minutes with a cap of a minute set)
+	a.QuotaRest, a.QuotaResetAt, a.RestCap = pk.QuotaRest, pk.QuotaResetAt, pk.RestCap
+	// how long a model asked of it alone is waited for, and the tools it
+	// loads in place, which `magpie provider set` takes for it
+	a.Patience, a.AdditionalTools = pk.Patience, pk.AdditionalTools
 	// the extra body fields written for it, which a ChatGPT account's
 	// requests take (WithExtraBody, magpie-releases#18)
 	a.ExtraBody = pk.ExtraBody
@@ -877,16 +887,17 @@ func Save(p Provider) error {
 		p.Name = p.ID
 	}
 	if _, ok := find(Accounts(), p.ID); ok || p.ID == "kiro" && (p.Key != "" || stored(p.ID)) {
-		// an account keeps only the user's model picks; the rest is the
-		// agent's own sign-in. One the user removed stays removed: only
-		// ShowAccount brings it back. Kiro's alone also keeps a key, which
-		// it takes in place of a sign-in — so saving one is how a Kiro
-		// that isn't signed in is added.
+		// an account keeps only what the user set on it, which withPicks
+		// puts back on it; the rest is the agent's own sign-in. One the
+		// user removed stays removed: only ShowAccount brings it back.
+		// Kiro's alone also keeps a key, which it takes in place of a
+		// sign-in — so saving one is how a Kiro that isn't signed in is
+		// added.
 		key := ""
 		if p.ID == "kiro" {
 			key = p.Key
 		}
-		p = Provider{ID: p.ID, Key: key, Models: p.Models, NoModels: p.NoModels, PickedFrom: p.PickedFrom, Delisted: p.Delisted, Unlisted: p.Unlisted, Off: p.Off, Fallback: p.Fallback, Routing: p.Routing, Sink: p.Sink, Affinity: p.Affinity, KeepLogin: p.KeepLogin, KeepLoginAs: p.KeepLoginAs, SwitchOnly: p.SwitchOnly, Contexts: p.Contexts, Family: p.Family, Proxy: p.Proxy, AccountProxies: p.AccountProxies, AccountModels: p.AccountModels, AccountCaps: p.AccountCaps, AccountWindowCaps: p.AccountWindowCaps, CapStop: p.CapStop, CapCareful: p.CapCareful, AccountNames: p.AccountNames, MaxConcurrency: p.MaxConcurrency, AccountConcurrency: p.AccountConcurrency, QueueLimit: p.QueueLimit, QueueWait: p.QueueWait, MaxRPM: p.MaxRPM, PriceRate: p.PriceRate, QuotaRest: p.QuotaRest, QuotaResetAt: p.QuotaResetAt, RestCap: p.RestCap, PinUpstream: p.PinUpstream, NativeCompaction: p.NativeCompaction, PromptAsWritten: p.PromptAsWritten, Hidden: hiddenAccount(p.ID), Quiet: quietAccount(p.ID), Tucked: tuckedAccount(p.ID)}
+		p = withPicks(Provider{ID: p.ID, Key: key, Hidden: hiddenAccount(p.ID), Quiet: quietAccount(p.ID), Tucked: tuckedAccount(p.ID)}, p)
 	} else {
 		p.AccountProxies = keyProxies(p) // a provider of keys proxies each key apart
 		if subscriptionID(p.ID) && !stored(p.ID) {

@@ -3936,6 +3936,14 @@ func (s *Server) attempt(w http.ResponseWriter, r *http.Request, from provider.P
 	// doesn't read (its safetySettings, topK, schema, thinkingBudget 0)
 	if relay && from == provider.Gemini && !streamOf(body) && !p.IsVertex() {
 		relay = false
+		// one asking an image's size or shape (imageConfig) is translated
+		// on the provider's Gemini API, the only one that takes it, not on
+		// the Chat API usable puts first, where the picture came at the
+		// model's default size (#3820); any other goes to the first API
+		// usable gives
+		if gjson.GetBytes(body, "generationConfig.imageConfig").IsObject() {
+			ownAPI = true
+		}
 	}
 	// a Qwen model that thinks gives one JSON body only with its thinking
 	// off: DashScope turns the request away with "parameter.enable_thinking

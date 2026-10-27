@@ -1507,7 +1507,8 @@ func codexServed(base string, h http.Header, on *provider.Provider) (id, account
 var unreadableItem = regexp.MustCompile(`(?i)(?:encrypted content for item|item with id) '?([A-Za-z]+_[A-Za-z0-9_-]+)'?`)
 
 // withoutUnreadable is body without what OpenAI's refusal msg says it
-// can't read: the item it names, or the reasoning another account sealed.
+// can't read: the item it names, or what another account sealed
+// (withoutSeals: a web search's too, #3887).
 func withoutUnreadable(body, msg []byte) ([]byte, bool) {
 	if !foreignReasoning.Match(msg) && !bytes.Contains(bytes.ToLower(msg), []byte("not found")) {
 		return nil, false
@@ -1518,7 +1519,7 @@ func withoutUnreadable(body, msg []byte) ([]byte, bool) {
 		}
 	}
 	if foreignReasoning.Match(msg) {
-		return withoutReasoning(body)
+		return withoutSeals(body)
 	}
 	return nil, false
 }

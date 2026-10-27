@@ -1188,9 +1188,34 @@ func resultSaid(b aBlock) []aBlock {
 // of another vendor's model may send it with no input_json_delta after
 // (蓝猫 on Discord), keeps that input; Anthropic's own start has an empty
 // one, its deltas after.
+//
+// Events give a call's input to the call started last, but an upstream
+// may start every block of a turn before any block's input (mapleleo-hub,
+// #3945): read one after another, each call but the last went with "{}"
+// and the last with every call's input run together. So a call waits, by
+// its block's index, and goes with its lines so far at the first
+// input_json_delta or content_block_stop of its block that comes while no
+// other call is open (given, its block not stopped yet); a start that
+// carries its whole input goes at once while none is. When the open call
+// stops, the calls whose blocks stopped while they waited go, and every
+// call still waiting goes when the reply ends; calls that go together go
+// in index order. Text and thinking never wait: what comes before a
+// call's input goes before the call.
 type anthropicDecoder struct {
 	server map[int]bool
 	whole  map[int]bool // the tool_use blocks whose start carried their input
+	// waiting are the calls not given yet, in the order they started;
+	// open is the call given whose block hasn't stopped
+	waiting []*aCall
+	open    *aCall
+}
+
+// aCall is a tool_use block's call, its lines kept as they came.
+type aCall struct {
+	index int
+	lines []string // its start, input_json_delta and stop lines
+	input string   // the whole input its start carried, if it did
+	ended bool     // its block stopped, or its start carried its whole input
 }
 
 func (d *anthropicDecoder) decode(data string, emit func(Event)) error {
@@ -1202,7 +1227,8 @@ func (d *anthropicDecoder) decode(data string, emit func(Event)) error {
 			Input json.RawMessage `json:"input"`
 		} `json:"content_block"`
 		Delta struct {
-			Type string `json:"type"`
+			Type       string `json:"type"`
+			StopReason string `json:"stop_reason"`
 		} `json:"delta"`
 	}
 	if decodeJSON([]byte(data), &ev) == nil {
@@ -1210,12 +1236,16 @@ func (d *anthropicDecoder) decode(data string, emit func(Event)) error {
 		case "content_block_start":
 			d.server[ev.Index] = ev.ContentBlock.Type == "server_tool_use"
 			d.whole[ev.Index] = false
-			if ev.ContentBlock.Type == "tool_use" && fullInput(ev.ContentBlock.Input) {
-				if err := decodeAnthropic(data, emit); err != nil {
-					return err
+			if ev.ContentBlock.Type == "tool_use" {
+				c := &aCall{index: ev.Index, lines: []string{data}}
+				if fullInput(ev.ContentBlock.Input) {
+					d.whole[ev.Index] = true
+					c.input, c.ended = string(ev.ContentBlock.Input), true
 				}
-				d.whole[ev.Index] = true
-				emit(Event{Kind: KToolArgs, Text: string(ev.ContentBlock.Input)})
+				d.waiting = append(d.waiting, c)
+				if c.ended && d.open == nil {
+					return d.give(c, emit)
+				}
 				return nil
 			}
 		case "content_block_delta", "content_block_stop":
@@ -1225,9 +1255,80 @@ func (d *anthropicDecoder) decode(data string, emit func(Event)) error {
 			if d.whole[ev.Index] && ev.Delta.Type == "input_json_delta" {
 				return nil // the input came whole already
 			}
+			stop := ev.Type == "content_block_stop"
+			if c := d.waitingAt(ev.Index); c != nil && (stop || ev.Delta.Type == "input_json_delta") {
+				c.lines = append(c.lines, data)
+				c.ended = c.ended || stop
+				if d.open == nil {
+					return d.give(c, emit)
+				}
+				return nil
+			}
+			if stop && d.open != nil && d.open.index == ev.Index {
+				d.open = nil
+				if err := decodeAnthropic(data, emit); err != nil {
+					return err
+				}
+				return d.giveWaiting(false, emit)
+			}
+		case "message_delta", "message_stop":
+			// the reply ends: every call still waiting goes before its stop
+			if ev.Type == "message_stop" || ev.Delta.StopReason != "" {
+				if err := d.giveWaiting(true, emit); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return decodeAnthropic(data, emit)
+}
+
+// waitingAt is the call waiting that started last at index i, nil if none.
+func (d *anthropicDecoder) waitingAt(i int) *aCall {
+	for _, c := range slices.Backward(d.waiting) {
+		if c.index == i {
+			return c
+		}
+	}
+	return nil
+}
+
+// give hands the client c's call: its lines so far as they came, the
+// whole input its start carried after the start. A call whose block
+// hasn't stopped is then the open one, the rest of its input going on as
+// it comes.
+func (d *anthropicDecoder) give(c *aCall, emit func(Event)) error {
+	d.waiting = slices.DeleteFunc(d.waiting, func(w *aCall) bool { return w == c })
+	for i, line := range c.lines {
+		if err := decodeAnthropic(line, emit); err != nil {
+			return err
+		}
+		if i == 0 && c.input != "" {
+			emit(Event{Kind: KToolArgs, Text: c.input})
+		}
+	}
+	if !c.ended {
+		d.open = c
+	}
+	return nil
+}
+
+// giveWaiting gives the calls waiting, in their blocks' index order:
+// every one when the reply ends, else those whose input is all in.
+func (d *anthropicDecoder) giveWaiting(all bool, emit func(Event)) error {
+	calls := slices.Clone(d.waiting)
+	slices.SortStableFunc(calls, func(a, b *aCall) int { return cmp.Compare(a.index, b.index) })
+	for _, c := range calls {
+		if all || c.ended {
+			if err := d.give(c, emit); err != nil {
+				return err
+			}
+		}
+	}
+	if all {
+		d.open = nil
+	}
+	return nil
 }
 
 // fullInput says whether a tool_use start's input is the call's own: an

@@ -413,10 +413,35 @@
     b.onclick = (ev) => { ev.stopPropagation(); move(c); };
     return b;
   };
-  const install = (pkg, nm) => act(pkg, "add", { spec: pkg }, () => {
-    const subs = subsOf(pkg);
-    status(subs.length ? t("{name} is installed — sign in to use it", { name: nm }) : t("{name} is installed", { name: nm }), "ok");
-  });
+  // the installed plugin spec's Install would replace (plugins/ holds one
+  // package of a name, plugin.Add), both named by source (#3685). typed:
+  // the field's, where a bare name may be a community plugin's and an
+  // unread repository's package is unknown: neither is asked about.
+  const sourceOf = (spec) => isGit(spec) ? spec : "npm:" + name(spec.replace(/^npm:\s*/, ""));
+  const namesakeOf = (spec, typed) => {
+    const r = ghRepo(spec);
+    const g = (tagged || []).find((x) => x.package === spec || (r && x.github.repo.toLowerCase() === r))?.github;
+    const as = g ? g.package || "" : spec.startsWith("npm:") ? name(spec.slice(4).trim()) : onNPM(spec) && (!typed || spec.startsWith("@")) ? name(spec) : "";
+    const e = as && mine?.plugins?.find((x) => (isGit(x.spec) ? x.package : onNPM(x.spec) && name(x.spec)) === as);
+    // no other plugin: the same repository, or npm's at another version
+    if (!e || (r ? ghRepo(e.spec) === r : !isGit(spec) && !isGit(e.spec))) return null;
+    return { old: sourceOf(e.spec), new: sourceOf(spec), package: as, off: !!e.off };
+  };
+  // false when the user keeps the plugin spec would replace
+  const replaceOK = async (spec, typed) => {
+    const was = namesakeOf(spec, typed);
+    if (!was) return true;
+    return confirmAction(t("Replace {old} with {new}?", was), was.off
+      ? t("{new} and {old} are both the package {package}, and only one of them can be installed: {old} is removed, and its options and sign-ins pass to {new}. {old} is off, so {new} is installed off too.", was)
+      : t("{new} and {old} are both the package {package}, and only one of them can be installed: {old} is removed, and its options and sign-ins pass to {new}.", was), t("Replace"));
+  };
+  const install = async (pkg, nm) => {
+    if (!await replaceOK(pkg)) return;
+    act(pkg, "add", { spec: pkg }, () => {
+      const subs = subsOf(pkg);
+      status(subs.length ? t("{name} is installed — sign in to use it", { name: nm }) : t("{name} is installed", { name: nm }), "ok");
+    });
+  };
 
   // A plugin's Update, wherever it is offered: npm has a newer version, or
   // a git one's repository a newer commit. Makes b that button and says
@@ -1007,10 +1032,10 @@
     go.type = "submit";
     go.disabled = busy.size > 0;
     if (busy.has("+")) { go.textContent = t("Installing…"); spec.disabled = true; }
-    box.onsubmit = (ev) => {
+    box.onsubmit = async (ev) => {
       ev.preventDefault();
       const s = spec.value.trim();
-      if (!s || busy.size) return;
+      if (!s || busy.size || !await replaceOK(s, true)) return;
       act("+", "add", { spec: s }, () => status(t("{name} is installed", { name: s }), "ok"));
     };
     box.append(spec);

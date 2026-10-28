@@ -7248,7 +7248,7 @@ function morePluginsTile(q) {
 
 // openPlugins: the Plugins tab, looking for q when there is one
 async function openPlugins(q) {
-  if (mode !== "window") { api("window/main?view=plugins", {}).catch(() => {}); return; }
+  if (mode !== "window") { api("window/main?view=plugins&q=" + encodeURIComponent(q || ""), {}).catch(() => {}); return; }
   if (!await show("plugins")) return;
   window.pluginQuery?.(q || "");
 }
@@ -23296,6 +23296,7 @@ function syncURL() {
   if (view === "agents") q.delete("view"); else q.set("view", view);
   if (view === "providers" && typeof editing === "string") q.set("edit", editing); else q.delete("edit");
   if (view === "settings") q.set("tab", setShown); else q.delete("tab");
+  q.delete("q"); // Plugins' q is looked for once (start.js)
   const s = q.size ? "?" + q : location.pathname;
   if (s !== location.search) history.replaceState(null, "", s);
 }

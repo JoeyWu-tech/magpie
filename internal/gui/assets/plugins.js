@@ -399,10 +399,43 @@
     b.onclick = (ev) => { ev.stopPropagation(); move(c); };
     return b;
   };
-  const install = (pkg, nm) => act(pkg, "add", { spec: pkg }, () => {
-    const subs = subsOf(pkg);
-    status(subs.length ? t("{name} is installed — sign in to use it", { name: nm }) : t("{name} is installed", { name: nm }), "ok");
-  });
+  // the plugin installed now that spec's Install would take the place
+  // of. plugins/ holds one package of a name, so another source of it
+  // is installed in its place, with its options and Off (plugin.Add),
+  // and the sign-ins it saved are kept by provider, for the code that
+  // serves that provider next. A card of someone else's repository reads
+  // like the one installed, so Install asks first, naming each plugin
+  // by its source: a git spec, or npm:<name>, resolve's own word for
+  // npm's (#3685). typed: what the field was given, where a short name
+  // may be a community plugin's (resolve) and a repository the page
+  // hasn't read is known only once installed: neither is asked about.
+  const sourceOf = (spec) => isGit(spec) ? spec : "npm:" + name(spec.replace(/^npm:\s*/, ""));
+  const namesakeOf = (spec, typed) => {
+    const r = ghRepo(spec);
+    const g = (tagged || []).find((x) => x.package === spec || (r && x.github.repo.toLowerCase() === r))?.github;
+    const as = g ? g.package || "" : spec.startsWith("npm:") ? name(spec.slice(4).trim()) : onNPM(spec) && (!typed || spec.startsWith("@")) ? name(spec) : "";
+    const e = as && mine?.plugins?.find((x) => (isGit(x.spec) ? x.package : onNPM(x.spec) && name(x.spec)) === as);
+    // the same repository by another spec, or npm's package at another
+    // version, is the same plugin
+    if (!e || (r ? ghRepo(e.spec) === r : !isGit(spec) && !isGit(e.spec))) return null;
+    return { old: sourceOf(e.spec), now: sourceOf(spec), as, off: !!e.off };
+  };
+  // false when the user keeps the plugin spec would replace
+  const replaceOK = async (spec, typed) => {
+    const was = namesakeOf(spec, typed);
+    if (!was) return true;
+    const say = { old: was.old, new: was.now, package: was.as };
+    return confirmAction(t("Replace {old} with {new}?", say), was.off
+      ? t("{new} and {old} are both the package {package}, and only one of them can be installed: {old} is removed, and its options and sign-ins pass to {new}. {old} is off, so {new} is installed off too.", say)
+      : t("{new} and {old} are both the package {package}, and only one of them can be installed: {old} is removed, and its options and sign-ins pass to {new}.", say), t("Replace"));
+  };
+  const install = async (pkg, nm) => {
+    if (!await replaceOK(pkg)) return;
+    act(pkg, "add", { spec: pkg }, () => {
+      const subs = subsOf(pkg);
+      status(subs.length ? t("{name} is installed — sign in to use it", { name: nm }) : t("{name} is installed", { name: nm }), "ok");
+    });
+  };
 
   // A plugin's Update, wherever it is offered: npm has a newer version, or
   // a git one's repository a newer commit. Makes b that button and says
@@ -985,10 +1018,10 @@
     go.type = "submit";
     go.disabled = busy.size > 0;
     if (busy.has("+")) { go.textContent = t("Installing…"); spec.disabled = true; }
-    box.onsubmit = (ev) => {
+    box.onsubmit = async (ev) => {
       ev.preventDefault();
       const s = spec.value.trim();
-      if (!s || busy.size) return;
+      if (!s || busy.size || !await replaceOK(s, true)) return;
       act("+", "add", { spec: s }, () => status(t("{name} is installed", { name: s }), "ok"));
     };
     box.append(spec);

@@ -28,6 +28,10 @@ its alias `magpie.gateway`, `*.gateway.js`), so a hook that imports `node:fs`
 is never also loaded as middleware.
 Bun runs TypeScript directly. A gateway-only package does not need provider
 main/exports, a client MCP installation, or a client skill.
+Discover lists a GitHub repository tagged `magpie-plugin` whose package.json has
+`magpie.hooks` and no main or exports as a Request hook, picked out with
+middleware (`TaggedRepos` checks that the hooks file is committed, as it does
+middleware's; `TestTaggedHooksAlone`, `plugin-github-hooks.test.cjs`).
 
 `export async function onRequest(body, ctx)` receives the client protocol JSON
 before routing. Return a JSON object to add context; return `undefined` to keep

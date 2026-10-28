@@ -70,12 +70,12 @@
   const summary = (l) => l.summary?.[lang()] || l.summary?.en || l.npm?.description || "";
   const count = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k" : String(n || 0);
   // a repository tagged magpie-plugin is installed by whichever spec
-  // names it (github:owner/repo, its page's URL), or as the package its
-  // package.json names
-  const ghRepo = (spec) => { const m = /^(?:github:|https?:\/\/(?:www\.)?github\.com\/)([^/#\s]+\/[^/#\s]+?)(?:\.git)?(?:[/#].*)?$/i.exec(spec) || (isGit(spec) && /^([^:/#]+\/[^:/#]+)(?:#.*)?$/.exec(spec)); return m ? m[1].toLowerCase() : ""; };
+  // names it (github:owner/repo, its page's or a git URL), never by its
+  // package's name, which another repository can give too (#3685)
+  const ghRepo = (spec) => { const m = /^(?:github:|(?:git\+)?(?:https?|ssh|git):\/\/(?:[^@/\s]+@)?(?:www\.|ssh\.)?github\.com(?::\d+(?=\/))?[/:])([^/#\s]+\/[^/#\s]+?)(?:\.git)?(?:[/#].*)?$/i.exec(spec) || (isGit(spec) && /^([^:/#]+\/[^:/#]+)(?:#.*)?$/.exec(spec)); return m ? m[1].toLowerCase() : ""; };
   const entryOf = (pkg) => {
     const g = (tagged || []).find((x) => x.package === pkg)?.github;
-    return mine?.plugins?.find((e) => name(e.spec) === pkg || (g && (ghRepo(e.spec) === g.repo.toLowerCase() || (g.package && isGit(e.spec) && e.package === g.package))));
+    return mine?.plugins?.find((e) => name(e.spec) === pkg || (g && ghRepo(e.spec) === g.repo.toLowerCase()));
   };
   // npm has the versions of a package: not a folder's, nor a git one's
   const onNPM = (spec) => !isPath(spec) && !isGit(spec);

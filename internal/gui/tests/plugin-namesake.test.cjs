@@ -12,7 +12,14 @@
 // installs nothing; Replace installs it. A card whose package nothing
 // installed has installs at once, and so does the field given the
 // repository installed by another spec. Five languages, wide and 440px, and
-// nothing scrolls on a click. The API is faked.
+// nothing scrolls on a click.
+//
+// A repository reads Installed only when it is the one installed, by
+// whichever spec names it (GitHub's shorthand, its page, a git URL over
+// https, ssh with a user, scp's colon or a port, ssh.github.com, git://,
+// owner/repo, another case and a ref), and the other of its package reads
+// Install, which asks, naming the spec installed. English and Chinese. The
+// API is faked.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -278,6 +285,50 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
                 assert.deepEqual(errors, []);
               } finally { await page.close(); }
             }
+          });
+        }
+      } finally { await ctx.close(); }
+    }
+  });
+  test(engine + ": a repository reads Installed only when it is the one installed", async (t) => {
+    const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || "chromium" }));
+    t.after(() => browser.close());
+    const OWN = repo("mu-zi-lee", PKG, PKG, 12);
+    const FORMS = [OWN.spec, OWN.url, `git+https://github.com/${OWN.repo}.git`, `git+ssh://git@github.com/${OWN.repo}.git`, `git+ssh://git@github.com:${OWN.repo}.git`, `git+ssh://git@github.com:22/${OWN.repo}.git`, `git+ssh://git@ssh.github.com:443/${OWN.repo}.git`, `git://github.com/${OWN.repo}.git#main`, OWN.repo, `github:Mu-Zi-Lee/${PKG}#v0.1.0`];
+    for (const lang of ["en", "zh"]) {
+      const w = L[lang];
+      const ctx = await browser.newContext({ viewport: { width: 980, height: 860 } });
+      await ctx.addInitScript(counting);
+      try {
+        for (const spec of FORMS) {
+          await t.test(lang + " " + spec, async () => {
+            const asked = [];
+            const page = await ctx.newPage();
+            try {
+              page.setDefaultTimeout(5000);
+              const errors = [];
+              page.on("pageerror", (e) => errors.push(e.message));
+              await page.route("**/*", server(lang, { installed: [{ spec, package: PKG }], repos: [OWN, NAMESAKE] }, asked));
+              await page.goto("http://magpie.test/?view=plugins", { timeout: 30000 });
+              const sec = page.locator("#view-plugins .pm-sec", { has: page.locator("h3", { hasText: w.section }) });
+              const own = sec.locator(".pm-card", { has: page.locator(".pm-by", { hasText: "mu-zi-lee" }) });
+              const theirs = sec.locator(".pm-card", { has: page.locator(".pm-by", { hasText: "Gyarados4157" }) });
+              await own.locator(".pm-act.done").waitFor();
+              await theirs.locator(".pm-act.get").waitFor();
+              await settled(page);
+              assert.equal(await sec.locator(".pm-card.have").count(), 1, "one of the two is installed");
+              // the other's Install names the one installed, by its spec
+              await reach(page, theirs.locator(".pm-act.get"));
+              await press(page, theirs.locator(".pm-act.get"));
+              const dlg = page.locator("dialog.action-confirm[open]");
+              await dlg.waitFor();
+              assert.equal(await dlg.locator("h2").innerText(), w.title(spec, NAMESAKE.spec));
+              await press(page, dlg.locator("button", { hasText: w.cancel }));
+              await dlg.waitFor({ state: "detached" });
+              assert.deepEqual(asked, []);
+              assert.equal(await sec.locator(".pm-card.have").count(), 1);
+              assert.deepEqual(errors, []);
+            } finally { await page.close(); }
           });
         }
       } finally { await ctx.close(); }

@@ -191,3 +191,40 @@ func TestGeminiImageConfigReachesCodeAssist(t *testing.T) {
 		}
 	}
 }
+
+// A request asked for one body that asks an image's size or shape goes to
+// the provider's Gemini API, not to the Chat API beside it, which has no
+// field for it (#3820: GuoJinguang's relay has both, and asked on its chat
+// completions imageSize 4K drew 1024x1024). One that asks for none goes to
+// Chat as before.
+func TestGeminiImageConfigGoesToTheGeminiAPIBesideChat(t *testing.T) {
+	const model = "gemini-3-pro-image-preview"
+	fresh(t)
+	up, rec := drawsBoth(t)
+	if err := provider.Save(provider.Provider{ID: "relay", Name: "Relay", Key: "k", Models: []string{model}, Chat: up.URL + "/v1", Gemini: up.URL + "/v1beta"}); err != nil {
+		t.Fatal(err)
+	}
+	asked := 0
+	for _, ask := range imageAsks {
+		code, body := post(t, "/v1beta/models/relay/"+model+":generateContent", imageAsk(ask.gen))
+		if code != 200 || !strings.Contains(body, "aGVsbG8=") {
+			t.Fatalf("asked %s: %d %s", ask.gen, code, body)
+		}
+		got, n := rec.last()
+		if n <= asked {
+			t.Fatalf("asked %s: nothing reached the relay", ask.gen)
+		}
+		asked = n
+		want := "/v1beta/models/" + model + ":streamGenerateContent"
+		if ask.want == "" {
+			want = "/v1/chat/completions"
+		}
+		if got.path != want {
+			t.Errorf("asked %s: the relay was asked at %s, want %s", ask.gen, got.path, want)
+			continue
+		}
+		if sent := gjson.GetBytes(got.body, "generationConfig.imageConfig").Raw; ask.want != "" && !sameConfig(sent, ask.want) {
+			t.Errorf("asked %s: sent %q: %s", ask.gen, sent, got.body)
+		}
+	}
+}

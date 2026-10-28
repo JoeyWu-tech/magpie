@@ -19778,7 +19778,7 @@ async function renderSync(v) {
   if (v.agents !== false) goes.push("agents");
   if (v.library !== false) goes.push("library");
   if (v.usage) goes.push("usage");
-  let status = t("Keeps {parts} the same on every computer", {
+  let line = t("Keeps {parts} the same on every computer", {
     parts: t(v.keys === false ? "providers without their API keys" : "providers with their API keys") + t(", ") + parts(goes) });
   const s3 = v.on && v.kind === "s3";
   const github = v.on && v.kind === "github";
@@ -19787,13 +19787,13 @@ async function renderSync(v) {
     // a bucket is named by its address, and the server it is on unless AWS
     const host = github ? [v.url, v.branch].filter(Boolean).join(" · ")
       : s3 ? [v.url, v.endpoint && hostOf(v.endpoint.includes("://") ? v.endpoint : "https://" + v.endpoint)].filter(Boolean).join(" · ") : hostOf(v.url);
-    status = v.error ? t("Couldn't sync: {error}", { error: v.serverFile ? serverFileSaid(v.serverFile) : t(v.error) })
+    line = v.error ? t("Couldn't sync: {error}", { error: v.serverFile ? serverFileSaid(v.serverFile) : t(v.error) })
       : v.last ? t("Synced {when} · {host}", { when: syncWhen(v.last), host }) : t("Not synced yet · {host}", { host });
     // the other kind's server, kept from before sync moved here
-    for (const kind of Object.keys(syncServers(v))) status += " · " + t("{kind} settings kept", { kind: syncNames[kind] });
-    if (v.auto === 0) status += " · " + t("only when asked");
+    for (const kind of Object.keys(syncServers(v))) line += " · " + t("{kind} settings kept", { kind: syncNames[kind] });
+    if (v.auto === 0) line += " · " + t("only when asked");
   }
-  const sub = row(t(github ? "GitHub sync" : s3 ? "S3 sync" : v.on ? "WebDAV sync" : "WebDAV, S3 or GitHub sync"), status, ...(v.on
+  const sub = row(t(github ? "GitHub sync" : s3 ? "S3 sync" : v.on ? "WebDAV sync" : "WebDAV, S3 or GitHub sync"), line, ...(v.on
     ? [btn(t("Sync now"), async (e) => { e.target.classList.add("busy"); renderSync(await api("davsync/now", {}).catch((x) => ({ ...v, error: x.message }))); }),
        btn(t(syncOpen === "dav" ? "Close" : "Edit"), toggle("dav"))]
     : [btn(t(syncOpen === "dav" ? "Close" : "Set up"), toggle("dav"))]));

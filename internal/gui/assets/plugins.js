@@ -130,10 +130,10 @@
     pn: [PAGE, "Panels", "Adds panels to magpie's own pages. They run shut off from the rest of magpie and can read only what its row lists"],
   };
   const kindOf = (l) => ({ middleware: "mw", agent: "ag", tools: "tl", page: "pg" })[l.kind] || "pv";
-  function kindChip(kind) {
+  function kindChip(kind, name) {
     const [d, word, tip] = KINDS[kind];
     const c = el("span", "pm-chip kind " + kind);
-    c.append(glyph(d, 10, 1.5), el("span", "", t(word)));
+    c.append(glyph(d, 10, 1.5), el("span", "", t(name || word)));
     c.title = t(tip);
     return c;
   }
@@ -1168,11 +1168,7 @@
     const gw = e.gateway;
     const ag = e.agent;
     if (mw || e.isMiddleware) nm.append(kindChip("mw"));
-    if (gw || e.isGateway) {
-      const chip = kindChip("mw");
-      chip.querySelector("span").textContent = t("Request hook");
-      nm.append(chip);
-    }
+    if (gw || e.isGateway) nm.append(kindChip("mw", "Request hook"));
     if (ag || e.isAgent) nm.append(kindChip("ag"));
     // a plugin of tools alone signs in to nothing: no Provider chip
     const toolsOnly = !!e.tools?.length && !e.providers?.length;

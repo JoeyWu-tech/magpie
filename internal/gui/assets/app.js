@@ -2283,8 +2283,7 @@ function askDisconnect(a) {
       status(t(err.message), "err");
     }
   };
-  const cancel = el("button", "text", t("Cancel"));
-  cancel.onclick = cancelAsk;
+  const cancel = askCancel();
   bar.append(STARTS_WITH.has(a.id) ? el("span", "ag-bar-note", t("Running {agent} copies take it once reopened", { agent: a.name })) : el("span"), el("span", "grow"), cancel, go);
   ed.append(bar);
   confirmAsk = ed;
@@ -5659,8 +5658,7 @@ function askLeave(a, field, value, opt) {
   const bar = el("div", "bar");
   const go = el("button", "text primary", value === "" ? t("Use default") : t("Use {model}", { model }));
   go.onclick = (e) => { e.stopPropagation(); closeConfirmAsk(); setPick(a, field, value, opt); };
-  const cancel = el("button", "text", t("Cancel"));
-  cancel.onclick = cancelAsk;
+  const cancel = askCancel();
   bar.append(STARTS_WITH.has(a.id) ? el("span", "ag-bar-note", t("Running {agent} copies take it once reopened", { agent: a.name })) : el("span"), el("span", "grow"), cancel);
   if (value === "") {
     const restore = el("button", "text", t("Disconnect and restore"));
@@ -6591,8 +6589,7 @@ function askForgetSaved(x) {
     }
     closeConfirmAsk();
   };
-  const cancel = el("button", "text", t("Cancel"));
-  cancel.onclick = cancelAsk;
+  const cancel = askCancel();
   bar.append(el("span", "grow"), cancel, go);
   ed.append(bar);
   confirmAsk = ed;
@@ -6624,8 +6621,7 @@ function askForgetAccount(x) {
     if (await providerAction("forget", { id: x.provider }, t("{name} signed out", { name: x.agentName }))) closeConfirmAsk();
     else go.disabled = false;
   };
-  const cancel = el("button", "text", t("Cancel"));
-  cancel.onclick = cancelAsk;
+  const cancel = askCancel();
   bar.append(el("span", "grow"), cancel, go);
   ed.append(bar);
   confirmAsk = ed;
@@ -6653,8 +6649,7 @@ function askSignOutLogin(a, l) {
     if (await accountAction("login/forget", { agent: a.agent, user: l.user }, t("{agent} signed out of {user}", { agent: a.agentName, user: l.user }), true)) closeConfirmAsk();
     else go.disabled = false;
   };
-  const cancel = el("button", "text", t("Cancel"));
-  cancel.onclick = cancelAsk;
+  const cancel = askCancel();
   bar.append(el("span", "grow"), cancel, go);
   ed.append(bar);
   ed.back = renderProviders; // the provider's editor it was asked from
@@ -17861,8 +17856,7 @@ function askReset(q) {
       status(err.message, "err");
     }
   };
-  const cancel = el("button", "text", t("Cancel"));
-  cancel.onclick = cancelAsk;
+  const cancel = askCancel();
   bar.append(el("span", "grow"), cancel, go);
   ed.append(bar);
   confirmAsk = ed;
@@ -17872,6 +17866,8 @@ function askReset(q) {
 }
 // closes a confirmation, nothing more (its Cancel, or an OK that only dismisses)
 function cancelAsk(e) { e.stopPropagation(); closeConfirmAsk(); }
+// a confirmation's Cancel button
+function askCancel() { const b = el("button", "text", t("Cancel")); b.onclick = cancelAsk; return b; }
 // THIRD_PARTY_NOTICES, which every build carries
 async function showNotices() {
   let text;
@@ -19887,8 +19883,7 @@ function askRestore(v, parts) {
       err.textContent = x.message;
     }
   };
-  const cancel = el("button", "text", t("Cancel"));
-  cancel.onclick = cancelAsk;
+  const cancel = askCancel();
   bar.append(el("span", "grow"), cancel, go);
   ed.append(bar);
   confirmAsk = ed;
@@ -19944,8 +19939,7 @@ function askUpload(f) {
       err.textContent = x.message;
     }
   };
-  const cancel = el("button", "text", t("Cancel"));
-  cancel.onclick = cancelAsk;
+  const cancel = askCancel();
   bar.append(el("span", "grow"), cancel, go);
   ed.append(bar);
   confirmAsk = ed;

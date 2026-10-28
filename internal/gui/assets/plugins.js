@@ -283,7 +283,7 @@
       merge();
       // the Providers page owns the dialog as it draws: only drawn when shown
       if (view === "providers") renderProviders();
-    } catch (e) { status(e.message, "err"); }
+    } catch (e) { statusErr(e); }
     draw();
     window.renderPluginDot?.();
     askNPM(true);
@@ -302,7 +302,7 @@
     } catch (e) {
       busy.delete(pkg);
       draw();
-      status(e.message, "err");
+      statusErr(e);
     }
   }
   // Check for updates: npm asked now, not what it said within the hour,
@@ -1039,7 +1039,7 @@
           spec.focus();
         }
       } catch (e) {
-        status(e.message, "err");
+        statusErr(e);
       } finally {
         b.disabled = busy.size > 0 || spec.disabled;
       }
@@ -1310,7 +1310,7 @@
         editing = { pkg, text: JSON.stringify(e.options || e.optionsExample || {}, null, 2), error: "" };
         draw();
         // the field the click opened takes the keys, where it is
-        page.querySelector(".pm-opts textarea")?.focus({ preventScroll: true });
+        page.querySelector(".pm-opts textarea")?.focus(NO_SCROLL);
       };
       val.append(o);
     }

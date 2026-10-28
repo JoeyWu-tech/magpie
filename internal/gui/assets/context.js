@@ -1242,7 +1242,7 @@
       const go = el("button", "text", t("Latest request"));
       go.type = "button";
       go.dataset.feature = "routing"; // it opens on the Routing page
-      go.onclick = () => window.openRoute(a.latestId, a.latestTime, { context: true }).catch((e) => status(e.message, "err"));
+      go.onclick = () => window.openRoute(a.latestId, a.latestTime, { context: true }).catch(statusErr);
       foot.append(go);
     }
     card.append(head, scores, tags, facts, mix, foot);
@@ -1278,7 +1278,7 @@
         still: true, cache, place: "session",
         series: s.points,
         crumbs: [agentLabel(s.agent), s.title || s.key.slice(0, 12), t("latest request")],
-        onPoint: (pt) => { if (!featuresOff.has("routing")) window.openRoute(pt.id, pt.time, { context: true }).catch((e) => status(e.message, "err")); },
+        onPoint: (pt) => { if (!featuresOff.has("routing")) window.openRoute(pt.id, pt.time, { context: true }).catch(statusErr); },
       }));
     }
     return box;
@@ -1497,7 +1497,7 @@
         await api("tune/" + path, { agent, knob: a.knob, model: a.model || "", value: String(value ?? "") });
         status(path === "apply" ? t("Saved: {agent} reads it from its next session", { agent: agentLabel(agent) }) : t("Put back"), "ok");
       } catch (e) {
-        status(e.message, "err");
+        statusErr(e);
       }
       tuneBusy = "";
       await loadTune(true);
@@ -1664,7 +1664,7 @@
     if (tuneData && tuneData.days !== +days) tuneData = null;
     if (ctxData && ctxData.days !== +days) ctxData = null;
     if (!ctxData && (ctxWaiting !== days || !$("#contextPane")?.childElementCount)) { ctxWaiting = days; renderContext(); }
-    loadTune().catch((e) => status(e.message, "err"));
+    loadTune().catch(statusErr);
     const data = await api("context?days=" + days);
     if (read !== ctxRead) return;
     // the auto refresh redraws only what changed: the same answer keeps the

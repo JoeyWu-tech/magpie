@@ -3,6 +3,8 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 const params = new URLSearchParams(location.search);
 const mode = params.get("mode") || "window";
+// focus that leaves the page where it is
+const NO_SCROLL = { preventScroll: true };
 // kept: magpie.<k> in localStorage, read as JSON; d when it holds none, or
 // not d's kind, or can't be read. keep writes one, for this time only if
 // it can't be kept
@@ -381,6 +383,8 @@ function status(msg, kind = "", ms = kind === "err" ? 8000 : 3500) {
   clearTimeout(status.t);
   if (msg) status.t = setTimeout(() => { s.textContent = ""; s.className = "status"; }, ms);
 }
+// a failed call's line, its error's message
+function statusErr(x) { status(x.message, "err"); }
 
 // ---------- agents view ----------
 
@@ -938,8 +942,8 @@ function closeProfileDetail() {
 function profileEscape() {
   if (disarmProfile()) return true;
   const chip = $("#profiles .chip.on");
-  if (closeProfileDetail()) { chip?.focus({ preventScroll: true }); return true; }
-  if (mode === "panel" && profBox.classList.contains("open")) { closeProfiles(); profBtn.focus({ preventScroll: true }); return true; }
+  if (closeProfileDetail()) { chip?.focus(NO_SCROLL); return true; }
+  if (mode === "panel" && profBox.classList.contains("open")) { closeProfiles(); profBtn.focus(NO_SCROLL); return true; }
   return false;
 }
 
@@ -983,7 +987,7 @@ function profileDetail(p, footed) {
   close.onclick = () => {
     const chip = $("#profiles .chip.on");
     closeProfileDetail();
-    chip?.focus({ preventScroll: true });
+    chip?.focus(NO_SCROLL);
   };
   head.append(el("span", "pd-name", p.name));
   if (p.inUse) head.append(el("span", "pd-cur", t("In use")));
@@ -1080,7 +1084,7 @@ function explainDrift(a) {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  ok.focus({ preventScroll: true });
+  ok.focus(NO_SCROLL);
 }
 
 const DRIFT_WHY = {
@@ -1665,7 +1669,7 @@ function guideCard(g) {
     add.onclick = (e) => {
       e.stopPropagation();
       if (mode === "window") addProviderFromAgents();
-      else api("window/main?view=providers", {}).catch((err) => status(err.message, "err"));
+      else api("window/main?view=providers", {}).catch(statusErr);
     };
     one.body.append(add);
   }
@@ -1721,7 +1725,7 @@ function guideCard(g) {
     open.onclick = (e) => {
       e.stopPropagation();
       if (mode === "window") show("routing");
-      else api("window/main?view=routing", {}).catch((err) => status(err.message, "err"));
+      else api("window/main?view=routing", {}).catch(statusErr);
     };
     acts.append(open);
     three.body.append(acts);
@@ -1870,7 +1874,7 @@ function daemonRestart() {
     } catch (e) {
       go.disabled = false;
       go.classList.remove("busy");
-      status(e.message, "err");
+      statusErr(e);
     }
   };
   return go;
@@ -1895,7 +1899,7 @@ function appReopen(bundle) {
     } catch (e) {
       go.disabled = false;
       go.classList.remove("busy");
-      status(e.message, "err");
+      statusErr(e);
     }
   };
   return go;
@@ -2133,7 +2137,7 @@ function connectPanel(a, { fields, fieldBtn }) {
     kv(t("Settings"), list);
     if (!prefs) {
       list.hidden = true;
-      loadSettings().then(() => { list.hidden = false; }, (e) => status(e.message, "err"));
+      loadSettings().then(() => { list.hidden = false; }, statusErr);
     }
   }
   if (a.launch) {
@@ -2277,7 +2281,7 @@ function askDisconnect(a) {
         head.querySelector("b").textContent = t("Restore saved settings and remove magpie?");
         ed.querySelector(".lib-confirm").textContent = t("Restore saved settings and remove magpie without contacting Aside? Close Aside first if it is running.");
         go.textContent = t("Restore saved settings and remove magpie");
-        cancel.focus({ preventScroll: true });
+        cancel.focus(NO_SCROLL);
         return;
       }
       status(t(err.message), "err");
@@ -2290,11 +2294,11 @@ function askDisconnect(a) {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  cancel.focus({ preventScroll: true });
+  cancel.focus(NO_SCROLL);
 }
 
 async function keepAgent(a) {
-  try { state = await api("agents/keep/" + a.id, {}); renderAgents(); } catch (e) { status(e.message, "err"); }
+  try { state = await api("agents/keep/" + a.id, {}); renderAgents(); } catch (e) { statusErr(e); }
 }
 
 // reapplyAgent writes what magpie set on the agent into its config again.
@@ -2308,7 +2312,7 @@ async function reapplyAgent(a, btn) {
     saidOk(msg);
   } catch (e) {
     btn?.classList.remove("busy");
-    status(e.message, "err");
+    statusErr(e);
   }
 }
 
@@ -2607,7 +2611,7 @@ function paintInstalls() {
     e.stopPropagation();
     installsOpen = !open;
     paintInstalls();
-    $("#agentsInstall .ag-install-head")?.focus({ preventScroll: true });
+    $("#agentsInstall .ag-install-head")?.focus(NO_SCROLL);
   };
   const parts = [head];
   if (open) {
@@ -2770,7 +2774,7 @@ async function saveArrangement(order, hidden, shown) {
   } catch (e) {
     state.settings = prev;
     renderAgents();
-    status(e.message, "err");
+    statusErr(e);
   }
 }
 
@@ -3273,7 +3277,7 @@ async function openAgentModels(a, anchor, ev) {
   let models, ordered = false, only = false, own = false, ownHidden = false;
   try { ({ models, ordered, only = false, own = false, ownHidden = false } = await api("agent-models/" + encodeURIComponent(a.id))); }
   catch (e) {
-    if (agentModelsLoading === loading) { loading.drop(); status(e.message, "err"); }
+    if (agentModelsLoading === loading) { loading.drop(); statusErr(e); }
     return;
   }
   if (agentModelsLoading !== loading) return;
@@ -3426,7 +3430,7 @@ async function openAgentModels(a, anchor, ev) {
     // came since the list was opened isn't among them, so it stays off
     const body = only ? { shown: models.filter((m) => !m.hidden).map((m) => m.id) } : { hidden };
     me.saving = me.saving.then(() => api("agent-models/" + encodeURIComponent(a.id), body))
-      .catch((e) => status(e.message, "err"));
+      .catch(statusErr);
   };
   onlySw.onclick = (e) => {
     e.preventDefault();
@@ -3440,7 +3444,7 @@ async function openAgentModels(a, anchor, ev) {
     const want = only;
     me.saving = me.saving.then(() => api("agent-models/" + encodeURIComponent(a.id), { only: want }))
       .catch((err) => {
-        status(err.message, "err");
+        statusErr(err);
         if (only !== want) return;
         only = !want;
         onlySw.classList.toggle("on", only);
@@ -3458,7 +3462,7 @@ async function openAgentModels(a, anchor, ev) {
     const want = ownHidden;
     me.saving = me.saving.then(() => api("agent-models/" + encodeURIComponent(a.id), { ownHidden: want }))
       .catch((err) => {
-        status(err.message, "err");
+        statusErr(err);
         if (ownHidden !== want) return;
         me.ownHidden = ownHidden = !want;
         ownSw.classList.toggle("on", !ownHidden);
@@ -3475,7 +3479,7 @@ async function openAgentModels(a, anchor, ev) {
   const saveOrder = (ids) => {
     me.changed = true;
     me.saving = me.saving.then(() => api("agent-models/" + encodeURIComponent(a.id), { order: ids }))
-      .catch((e) => status(e.message, "err"));
+      .catch(statusErr);
     return me.saving;
   };
   const moveTo = (id, to) => {
@@ -3512,7 +3516,7 @@ async function openAgentModels(a, anchor, ev) {
         e.preventDefault();
         if (!moveTo(m.id, i + (e.key === "ArrowUp" ? -1 : 1))) return;
         draw();
-        list.querySelector(`.am-or[data-id="${CSS.escape(m.id)}"]`)?.focus({ preventScroll: true });
+        list.querySelector(`.am-or[data-id="${CSS.escape(m.id)}"]`)?.focus(NO_SCROLL);
       };
       r.onpointerdown = (e) => dragRows(e, r, r, body, [...body.children], (to) => { moveTo(m.id, to); draw(); });
       body.append(r);
@@ -3702,14 +3706,14 @@ async function openAgentModels(a, anchor, ev) {
     e.preventDefault();
     e.stopPropagation();
     closeAgentModels();
-    me.anchor.focus({ preventScroll: true });
+    me.anchor.focus(NO_SCROLL);
   };
   me.scrolled = (e) => { if (scrollCloses(box, e)) closeAgentModels(); };
   document.addEventListener("mousedown", me.outside, true);
   document.addEventListener("keydown", me.keys, true);
   document.addEventListener("scroll", me.scrolled, true);
   addEventListener("resize", closeAgentModels);
-  q.focus({ preventScroll: true });
+  q.focus(NO_SCROLL);
 }
 
 let agentMenu = null;
@@ -3783,7 +3787,7 @@ function openRowMenu(anchor, acts) {
   const scroll = (e) => { if (scrollCloses(box, e)) closeAgentMenu(); };
   const keys = (e) => {
     const k = items.indexOf(document.activeElement);
-    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeAgentMenu(); anchor.focus({ preventScroll: true }); }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeAgentMenu(); anchor.focus(NO_SCROLL); }
     else if (e.key === "Tab") closeAgentMenu();
     else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) {
       e.preventDefault(); e.stopPropagation();
@@ -3796,7 +3800,7 @@ function openRowMenu(anchor, acts) {
   document.addEventListener("scroll", scroll, true);
   addEventListener("resize", closeAgentMenu);
   agentMenu = { box, anchor, outside, keys, scroll };
-  items[0]?.focus({ preventScroll: true });
+  items[0]?.focus(NO_SCROLL);
 }
 
 // Claude Code's opus/sonnet/haiku/fable can each have a model of their own
@@ -4218,7 +4222,7 @@ async function load(again) {
     // never sent back, so a rebuild would empty it
     if (view === "settings" && !syncOpen) await loadSettings();
   } catch (e) {
-    status(e.message, "err");
+    statusErr(e);
   }
   renderUpdateBadge();
   cliBehindOnce();
@@ -4384,7 +4388,7 @@ async function skipUpdate(v) {
     if (state) state.settings = ns;
     if (v) status(t("Update hidden until the next version; Settings still has it"), "ok", 3000);
   } catch (e) {
-    status(e.message, "err");
+    statusErr(e);
   }
   renderUpdateBadge();
   if (view === "settings" && prefs) renderSettings();
@@ -4441,7 +4445,7 @@ function cliBehindOnce() {
   const quiet = el("button", "text", t("Hide until the next version"));
   quiet.onclick = async (e) => {
     e.stopPropagation();
-    try { await api("cli-behind/quiet", {}); } catch (err) { return status(err.message, "err"); }
+    try { await api("cli-behind/quiet", {}); } catch (err) { return statusErr(err); }
     closeConfirmAsk();
   };
   const ok = el("button", "text primary", t("OK"));
@@ -4451,7 +4455,7 @@ function cliBehindOnce() {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  ok.focus({ preventScroll: true });
+  ok.focus(NO_SCROLL);
 }
 async function whatsNewOnce() {
   if (whatsNewAsked || mode === "panel" || document.hidden || !$("#modal").hidden) return;
@@ -4555,7 +4559,7 @@ function showWhatsNew(releases, auto, more = {}) {
     // told at once, so Escape or a click outside keeps it as well as Close
     const [quiet, box] = tick(t("Don't show again today"), false);
     quiet.classList.add("wn-quiet");
-    box.onchange = () => api("whatsnew/today", { on: box.checked }).catch((e) => status(e.message, "err"));
+    box.onchange = () => api("whatsnew/today", { on: box.checked }).catch(statusErr);
     bar.append(quiet);
   }
   bar.append(el("span", "grow"), ok);
@@ -4563,7 +4567,7 @@ function showWhatsNew(releases, auto, more = {}) {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  ok.focus({ preventScroll: true });
+  ok.focus(NO_SCROLL);
 }
 
 // noteBlocks draws a release's markdown as text: headings (tHeading),
@@ -4715,7 +4719,7 @@ async function confirmUpdate(u, go) {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  ok.focus({ preventScroll: true });
+  ok.focus(NO_SCROLL);
   // the notes' answer asks the feed again first, and names a release out
   // since the one downloaded (#910), which the restart then waits for
   const w = await api(updatePath("update/notes")).catch(() => null);
@@ -4810,7 +4814,7 @@ function ultracodeToggle(a, f) {
       renderAgents();
       const msg = t("{agent} ultracode → {value}", { agent: a.name, value: t(on ? "off" : "on") });
       saidOk(msg);
-    } catch (e) { status(e.message, "err"); }
+    } catch (e) { statusErr(e); }
   };
   return b;
 }
@@ -5059,7 +5063,7 @@ function effortSeg(a, f) {
     saving = saving.then(async () => {
       state = await api("set", { agent: a.id, field: f.key, value: o.value });
       effortSaid(a, f, o);
-    }).catch((e) => { status(e.message, "err"); renderAgents(); });
+    }).catch((e) => { statusErr(e); renderAgents(); });
   };
   const stopAt = (x) => {
     const r = rail.getBoundingClientRect();
@@ -5157,7 +5161,7 @@ function renderEffortPicker() {
       const next = await api("set", { agent: opened.agent.id, field: opened.field.key, value: option.value });
       state = next;
       effortSaid(opened.agent, opened.field, option);
-    }).catch((e) => status(e.message, "err"));
+    }).catch(statusErr);
   };
   range.onkeydown = (ev) => {
     if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closePicker(); }
@@ -5515,7 +5519,7 @@ function fastToggle(o) {
       status(t(next.ultra ? "{model} is sent Ultrafast for {agent}" : next.fast ? "{model} is sent fast for {agent}" : "{model} is sent at the usual speed for {agent}", { model: name, agent }), "ok");
     } catch (e) {
       setFast(o, was.fast, was.ultra);
-      status(e.message, "err");
+      statusErr(e);
     }
   };
   return b;
@@ -5599,7 +5603,7 @@ function keptNote(m) {
     act.onclick = (ev) => {
       ev.stopPropagation();
       closePicker();
-      if (mode !== "window") api("window/main?view=routing&newgroup=" + encodeURIComponent(m.id), {}).catch((e) => status(e.message, "err"));
+      if (mode !== "window") api("window/main?view=routing&newgroup=" + encodeURIComponent(m.id), {}).catch(statusErr);
       else window.newGroupWith?.(m.id, m.name, ev);
     };
   }
@@ -5624,7 +5628,7 @@ async function commit(value) {
     if (opt) renderList();
     else { $("#q").value = ""; filter(); } // a model typed in is in now
     // the filter keeps the keys, for the next one and Escape
-    if (!web || !matchMedia("(pointer: coarse)").matches) $("#q").focus({ preventScroll: true });
+    if (!web || !matchMedia("(pointer: coarse)").matches) $("#q").focus(NO_SCROLL);
     return;
   }
   closePicker();
@@ -5702,7 +5706,7 @@ function askLeave(a, field, value, opt) {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  cancel.focus({ preventScroll: true });
+  cancel.focus(NO_SCROLL);
 }
 
 // setPick writes a value picked for an agent's field
@@ -5726,7 +5730,7 @@ async function setPick(agent, field, value, opt) {
           catch (err) { save.disabled = false; status(t(err.message), "err"); }
         };
         bar.append(cancel, save); ed.append(bar); confirmAsk = ed; openModal(ed);
-        cancel.focus({ preventScroll: true });
+        cancel.focus(NO_SCROLL);
       } else status(t(err.message), "err");
     }
     return;
@@ -5763,7 +5767,7 @@ async function setPick(agent, field, value, opt) {
       field.value = was;
       renderAgents();
     }
-    status(e.message, "err");
+    statusErr(e);
   }
 }
 
@@ -5875,7 +5879,7 @@ async function profileAction(action, name, update) {
     state.profiles = before;
     renderProfiles();
     fit();
-    status(e.message, "err");
+    statusErr(e);
   }
 }
 
@@ -5895,7 +5899,7 @@ saveCurrent.onclick = () => {
   const open = saveField();
   if (open) {
     if (open.value.trim()) profileAction("save", open.value.trim());
-    else open.focus({ preventScroll: true });
+    else open.focus(NO_SCROLL);
     return;
   }
   const input = el("input", "chip-input");
@@ -5909,7 +5913,7 @@ saveCurrent.onclick = () => {
   saveCurrent.before(input);
   $(".profiles").classList.add("naming"); // for the panel's hint: :has() came in Safari 15.4 (#220)
   saveCurrent.textContent = t("Save");
-  input.focus({ preventScroll: true });
+  input.focus(NO_SCROLL);
 };
 
 // ---------- providers view ----------
@@ -6210,7 +6214,7 @@ function renderProviders() {
       // a list drawn before the fresh one is in (#1519) leaves out what the
       // editor shows (headers, proxies): the row opens on the fresh one
       if (providers.last) {
-        try { await loadProviders(); } catch (e) { status(e.message, "err"); return; }
+        try { await loadProviders(); } catch (e) { statusErr(e); return; }
         if (!providers.providers.some((x) => x.id === p.id)) return;
       }
       editing = open ? null : p.id; draft = null; renderProviders();
@@ -6380,7 +6384,7 @@ async function arrangeProvider(id, to, keyboard) {
   const handle = () => $(`#providers .row.provider[data-id="${CSS.escape(id)}"] .pv-handle`);
   providers = { ...prev, providers: order.map((x) => byId.get(x)) };
   renderProviders();
-  if (keyboard) handle()?.focus({ preventScroll: true });
+  if (keyboard) handle()?.focus(NO_SCROLL);
   const seq = ++providerArrangeSeq;
   let next;
   try {
@@ -6388,7 +6392,7 @@ async function arrangeProvider(id, to, keyboard) {
     status(t("Provider order saved"), "ok");
   } catch (e) {
     next = prev;
-    status(e.message, "err");
+    statusErr(e);
   }
   // a later move, made while this one was saved, has the last word
   if (seq !== providerArrangeSeq) return;
@@ -6397,7 +6401,7 @@ async function arrangeProvider(id, to, keyboard) {
   const a = document.activeElement, held = a?.matches?.("#providers .pv-handle") ? a.closest(".row.provider").dataset.id : null;
   providers = next;
   renderProviders();
-  if (held) $(`#providers .row.provider[data-id="${CSS.escape(held)}"] .pv-handle`)?.focus({ preventScroll: true });
+  if (held) $(`#providers .row.provider[data-id="${CSS.escape(held)}"] .pv-handle`)?.focus(NO_SCROLL);
 }
 let providerArrangeSeq = 0;
 
@@ -6428,7 +6432,7 @@ async function switchProvider(p, on, s) {
     saidMoved(t(on ? "{name} is on" : "{name} is off: agents no longer get its models", { name: p.name }));
   } catch (e) {
     s?.classList.toggle("on", !on);
-    status(e.message, "err");
+    statusErr(e);
   }
 }
 
@@ -6661,7 +6665,7 @@ function askForgetAccount(x) {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  cancel.focus({ preventScroll: true });
+  cancel.focus(NO_SCROLL);
 }
 
 // askSignOutLogin asks before Codex is signed out of its only account, as
@@ -6691,7 +6695,7 @@ function askSignOutLogin(a, l) {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  cancel.focus({ preventScroll: true });
+  cancel.focus(NO_SCROLL);
 }
 
 // accountPlan is the account's chip: its vendor and plan, the plan alone
@@ -6761,12 +6765,12 @@ function copyByCommand(text) {
   document.body.append(box);
   let ok = false;
   try {
-    box.focus({ preventScroll: true });
+    box.focus(NO_SCROLL);
     box.select();
     ok = document.execCommand("copy");
   } catch { ok = false; }
   box.remove();
-  if (was && was.focus) was.focus({ preventScroll: true });
+  if (was && was.focus) was.focus(NO_SCROLL);
   return ok;
 }
 
@@ -7249,7 +7253,7 @@ function renderAdd() {
   };
   drawTiles();
   if (hadFocus && $("#modal").hidden) {
-    (focusPick && sheet.querySelector(`[data-pick="${CSS.escape(focusPick)}"]`) || q).focus({ preventScroll: true });
+    (focusPick && sheet.querySelector(`[data-pick="${CSS.escape(focusPick)}"]`) || q).focus(NO_SCROLL);
     if (selection) q.setSelectionRange(...selection);
   }
   return editing && typeof editing === "object" ? renderEditor(null, editing.preset) : null;
@@ -7571,7 +7575,7 @@ function confirmAction(title, message, action) {
     confirmationPending = dialog;
     const finish = (accepted) => {
       dialog.close(); dialog.remove(); confirmationPending = null;
-      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+      if (previousFocus?.isConnected) previousFocus.focus(NO_SCROLL);
       resolve(accepted);
     };
     cancel.onclick = () => finish(false);
@@ -7595,7 +7599,7 @@ function confirmAction(title, message, action) {
     // Open after the triggering Escape has finished, so it cannot cancel this dialog.
     requestAnimationFrame(() => {
       dialog.showModal();
-      cancel.focus({ preventScroll: true });
+      cancel.focus(NO_SCROLL);
     });
   });
 }
@@ -7625,7 +7629,7 @@ function priceTypedError(ed) {
   const id = Object.keys(draft?.priceTyped || {}).find((x) => !draft.chosen?.length || draft.chosen.includes(x));
   if (id === undefined) return false;
   const row = [...ed.querySelectorAll(".mname")].find((r) => r.querySelector("code")?.textContent === id);
-  [...(row?.querySelectorAll(".mprice input") || [])].find((i) => i.value.trim() === "" && !i.placeholder)?.focus({ preventScroll: true });
+  [...(row?.querySelectorAll(".mprice input") || [])].find((i) => i.value.trim() === "" && !i.placeholder)?.focus(NO_SCROLL);
   editorError(t("{id} has no list price: give its input and output prices", { id }), "warn");
   return true;
 }
@@ -7855,7 +7859,7 @@ function advancedSet(d, p) {
     !!d.fallback?.length || !!p?.balanceToken?.set;
 }
 function priceRateError(ed) {
-  shown(ed.querySelector("input.price-rate"))?.focus({ preventScroll: true });
+  shown(ed.querySelector("input.price-rate"))?.focus(NO_SCROLL);
   return editorError(t("Price rate: a number from 0 to 1000, at most three decimals"), "warn");
 }
 function concurrencyDraft(p) {
@@ -7878,10 +7882,10 @@ function queueOfDraft() {
 }
 function queueError(ed, bad) {
   if (bad === "maxRPM") {
-    shown(ed.querySelector("input.rpm"))?.focus({ preventScroll: true });
+    shown(ed.querySelector("input.rpm"))?.focus(NO_SCROLL);
     return editorError(t("Requests per minute: a whole number from 0 to 10000"), "warn");
   }
-  shown(ed.querySelector(bad === "queueLimit" ? "input.queue-limit" : "input.queue-wait"))?.focus({ preventScroll: true });
+  shown(ed.querySelector(bad === "queueLimit" ? "input.queue-limit" : "input.queue-wait"))?.focus(NO_SCROLL);
   return editorError(bad === "queueLimit" ? t("Queue size: a whole number from 0 to 10000") : t("Queue wait: a whole number of seconds from 0 to 3600"), "warn");
 }
 // concurrencyOfDraft is the draft's limit as it is saved — null for none
@@ -7893,7 +7897,7 @@ function concurrencyOfDraft() {
   return +v;
 }
 function concurrencyError(ed) {
-  shown(ed.querySelector("input.concurrency"))?.focus({ preventScroll: true });
+  shown(ed.querySelector("input.concurrency"))?.focus(NO_SCROLL);
   return editorError(t("Concurrency: a whole number from 0 to 1000"), "warn");
 }
 function proxyDraft(p) {
@@ -7982,7 +7986,7 @@ function proxyLines(items, hint, foldKeys) {
       for (const it of items.filter((it, i) => i < KEYS_FIRST || own(it)).slice(0, KEYS_PAGE)) add(proxyLine(it));
       const more = el("button", "text acct-proxy-more", t("All {n} keys", { n: items.length }));
       more.type = "button";
-      more.onclick = () => { q = ""; openTools(); draw(); tools.querySelector("input").focus({ preventScroll: true }); };
+      more.onclick = () => { q = ""; openTools(); draw(); tools.querySelector("input").focus(NO_SCROLL); };
       add(more);
       return;
     }
@@ -8703,7 +8707,7 @@ function openModal(content) {
   const focus = focusID && content.querySelector("#" + CSS.escape(focusID))
     || focusLabel && [...content.querySelectorAll("[aria-label]")].find((element) => element.getAttribute("aria-label") === focusLabel)
     || focusIndex >= 0 && content.querySelectorAll("input, textarea, select, button")[focusIndex];
-  (focus || content.querySelector("input:not([disabled]), textarea, select, button:not([disabled])") || d).focus({ preventScroll: true });
+  (focus || content.querySelector("input:not([disabled]), textarea, select, button:not([disabled])") || d).focus(NO_SCROLL);
   const body = content.querySelector(":scope > .ebody");
   if (body) body.scrollTop = top; // a re-render keeps the place
   const nextNames = content.querySelector(".mnames:not([hidden])");
@@ -8786,8 +8790,8 @@ function closeModal() {
     m.classList.remove("out");
     d.replaceChildren();
     modalFormBase = "";
-    if (modalReturnFocus?.isConnected && !modalReturnFocus.closest("[hidden]")) modalReturnFocus.focus({ preventScroll: true });
-    else if (!$("#view-" + view).hidden) $("#view-" + view).focus({ preventScroll: true });
+    if (modalReturnFocus?.isConnected && !modalReturnFocus.closest("[hidden]")) modalReturnFocus.focus(NO_SCROLL);
+    else if (!$("#view-" + view).hidden) $("#view-" + view).focus(NO_SCROLL);
     modalReturnFocus = null;
     for (const a of [...m.getAnimations(), ...d.getAnimations()]) a.cancel();
     d.style.opacity = d.style.transform = d.style.clipPath = "";
@@ -8796,7 +8800,7 @@ function closeModal() {
     const sheet = $("#addSheet");
     if (adding && !sheet.hidden && !$("#view-providers").hidden) {
       const option = addReturnPick && sheet.querySelector(`[data-pick="${CSS.escape(addReturnPick)}"]`);
-      (option || sheet.querySelector(".find"))?.focus({ preventScroll: true });
+      (option || sheet.querySelector(".find"))?.focus(NO_SCROLL);
     }
   }, () => {});
   return done;
@@ -9295,17 +9299,17 @@ function drawEditor(p, presetID) {
     const saveBtn = el("button", "text primary", t("Save"));
     saveBtn.onclick = () => {
       const cx = parseContexts(draft.contexts || "");
-      if (cx.error) { shown(ed.querySelector("input.contexts"))?.focus({ preventScroll: true }); return editorError(t("Context window: {v} is not a length like 128k or 1m", { v: cx.error }), "warn"); }
+      if (cx.error) { shown(ed.querySelector("input.contexts"))?.focus(NO_SCROLL); return editorError(t("Context window: {v} is not a length like 128k or 1m", { v: cx.error }), "warn"); }
       const ox = parseContexts(draft.outputs || "");
       if (ox.error) return outputError(ed, ox.error);
       const cpx = parseContexts(draft.compacts || "");
       if (cpx.error) return compactError(ed, cpx.error);
       const proxy = proxyOfDraft();
-      if (proxy === null) { shown(ed.querySelector(".proxy-url"))?.focus({ preventScroll: true }); return editorError(t("Proxy: type its address, like http://127.0.0.1:7890"), "warn"); }
+      if (proxy === null) { shown(ed.querySelector(".proxy-url"))?.focus(NO_SCROLL); return editorError(t("Proxy: type its address, like http://127.0.0.1:7890"), "warn"); }
       const own = accountProxiesOfDraft();
       if (own.missing) {
         const line = [...ed.querySelectorAll(".acct-proxy")].find((x) => x.dataset.user.toLowerCase() === own.missing);
-        shown(line?.querySelector(".proxy-url"))?.focus({ preventScroll: true });
+        shown(line?.querySelector(".proxy-url"))?.focus(NO_SCROLL);
         return editorError(t("Proxy of {user}: type its address, like http://127.0.0.1:7890", { user: line?.dataset.user || own.missing }), "warn");
       }
       const maxConcurrency = concurrencyOfDraft();
@@ -9397,7 +9401,7 @@ function drawEditor(p, presetID) {
     if (curlBase && !c.api) notes.push(t("Its URL isn't an address ending in /chat/completions, /messages or /responses: type the base URL."));
     if (curlBase && c.urlHole) notes.push(t("Replace {part} in the base URL.", { part: c.urlHole }));
     if (c.placeholder) notes.push(t("Its key, {key}, only stands for one: paste your own API key.", { key: c.placeholder }));
-    if (!c.key) shown(key)?.focus({ preventScroll: true });
+    if (!c.key) shown(key)?.focus(NO_SCROLL);
     editorError(notes.join(" "), "note");
     return true;
   };
@@ -9421,7 +9425,7 @@ function drawEditor(p, presetID) {
   eye.onclick = async () => {
     if (key.type === "password") {
       if (!key.value && p?.key.set) {
-        try { key.value = (await api("provider/key", { id: p.id })).key; revealed = true; } catch (e) { status(e.message, "err"); return; }
+        try { key.value = (await api("provider/key", { id: p.id })).key; revealed = true; } catch (e) { statusErr(e); return; }
       }
       key.type = "text"; eye.textContent = t("Hide");
     } else {
@@ -9908,15 +9912,15 @@ function drawEditor(p, presetID) {
     const body = { id: p ? slug(draft.id) || p.id : draft.id, from: p?.id, name: draft.name, preset: draft.preset, key: draft.key || "", chat: draft.chat, responses: draft.responses, anthropic: draft.anthropic, gemini: (draft.gemini || "").trim(), catalog: draft.catalog, models: p ? chosenIds() : draft.extra, headers: headersOf(draft.headers), new: isNew };
     if (isNew && draft.copyOf) body.copyOf = draft.copyOf;
     const xb = extraBodyOf(draft.extraBody);
-    if (xb.error) { shown(ed.querySelector(".extra-body textarea"))?.focus({ preventScroll: true }); return editorError(t("Extra body: {why}", { why: xb.error }), "warn"); }
+    if (xb.error) { shown(ed.querySelector(".extra-body textarea"))?.focus(NO_SCROLL); return editorError(t("Extra body: {why}", { why: xb.error }), "warn"); }
     body.extraBody = xb.value;
     if (decides || custom) body.decide = (custom && draft.api !== "decide" && !p?.decide ? "" : draft.decide || "").trim();
-    if ((body.decide || "").includes(WORKSPACE)) { ed.querySelector(".workspace-id")?.focus({ preventScroll: true }); return editorError(t("Give the workspace ID your API key belongs to, or pick the Token Plan"), "warn"); }
+    if ((body.decide || "").includes(WORKSPACE)) { ed.querySelector(".workspace-id")?.focus(NO_SCROLL); return editorError(t("Give the workspace ID your API key belongs to, or pick the Token Plan"), "warn"); }
     if (custom) {
       // the API picked for the Base URL is saved with it, and one left with
       // no URL is said rather than lost: the editor would open on another
       if (!(draft[apiField[draft.api]] || "").trim() && ["chat", "responses", "anthropic", "gemini", "decide"].some((k) => (draft[k] || "").trim())) {
-        ed.querySelector(".base-url")?.focus({ preventScroll: true });
+        ed.querySelector(".base-url")?.focus(NO_SCROLL);
         return editorError(t("Base URL: type the {api} URL, or pick the API the URL you have is for", { api: t(API_NAMES[draft.api]) }), "warn");
       }
       body.baseAPI = draft.api === "openai" ? "chat" : draft.api;
@@ -9932,7 +9936,7 @@ function drawEditor(p, presetID) {
     if (!decideOnly(p || pr)) body.nativeCompaction = !!draft.nativeCompaction && carriesCompaction();
     body.passUserAgent = !!draft.passUserAgent && uaPassable();
     const cx = parseContexts(draft.contexts || "");
-    if (cx.error) { shown(ed.querySelector("input.contexts"))?.focus({ preventScroll: true }); return editorError(t("Context window: {v} is not a length like 128k or 1m", { v: cx.error }), "warn"); }
+    if (cx.error) { shown(ed.querySelector("input.contexts"))?.focus(NO_SCROLL); return editorError(t("Context window: {v} is not a length like 128k or 1m", { v: cx.error }), "warn"); }
     body.contexts = cx.map;
     if (!decideOnly(p || pr)) {
       const ox = parseContexts(draft.outputs || "");
@@ -9943,12 +9947,12 @@ function drawEditor(p, presetID) {
       body.compacts = cpx.map;
     }
     body.proxy = proxyOfDraft();
-    if (body.proxy === null) { shown(ed.querySelector(".proxy-url"))?.focus({ preventScroll: true }); return editorError(t("Proxy: type its address, like http://127.0.0.1:7890"), "warn"); }
+    if (body.proxy === null) { shown(ed.querySelector(".proxy-url"))?.focus(NO_SCROLL); return editorError(t("Proxy: type its address, like http://127.0.0.1:7890"), "warn"); }
     if (perKey) {
       const own = accountProxiesOfDraft();
       if (own.missing) {
         const line = ed.querySelector(`.acct-proxy[data-key="${own.missing}"]`);
-        shown(line?.querySelector(".proxy-url"))?.focus({ preventScroll: true });
+        shown(line?.querySelector(".proxy-url"))?.focus(NO_SCROLL);
         return editorError(t("Proxy of {user}: type its address, like http://127.0.0.1:7890", { user: line?.querySelector(".who")?.textContent || own.missing }), "warn");
       }
       body.accountProxies = own.map;
@@ -9966,7 +9970,7 @@ function drawEditor(p, presetID) {
     if (team) {
       // both or neither: {} clears them
       const org = (draft.zhipuTeam.org || "").trim(), project = (draft.zhipuTeam.project || "").trim();
-      if (!org !== !project) { ed.querySelector(org ? ".team-project" : ".team-org")?.focus({ preventScroll: true }); return editorError(t("Team plan: give both the organization ID and the project ID"), "warn"); }
+      if (!org !== !project) { ed.querySelector(org ? ".team-project" : ".team-org")?.focus(NO_SCROLL); return editorError(t("Team plan: give both the organization ID and the project ID"), "warn"); }
       body.zhipuTeam = org ? { org, project } : {};
     }
     if (access) {
@@ -9975,16 +9979,16 @@ function drawEditor(p, presetID) {
       body.accessKeyID = draft.accessKeyID || "";
       if (draft.secretAccessKey) body.secretAccessKey = draft.secretAccessKey;
       else if (draft.clearAccessKey) body.clearAccessKey = true;
-      if (accessShown() && body.accessKeyID && !body.secretAccessKey && !(access.secretSet && !draft.clearAccessKey)) { ed.querySelector(".volc-sk")?.focus({ preventScroll: true }); return editorError(t("Give the access key's Secret too"), "warn"); }
+      if (accessShown() && body.accessKeyID && !body.secretAccessKey && !(access.secretSet && !draft.clearAccessKey)) { ed.querySelector(".volc-sk")?.focus(NO_SCROLL); return editorError(t("Give the access key's Secret too"), "warn"); }
     }
     if (vertex) body.vertex = vertexOfDraft();
     if (isNew && custom && !body.name) { name.focus(); return editorError(t("Give it a name"), "warn"); }
     if (isNew && custom && !body.chat && !body.anthropic && !body.responses && !body.gemini && !body.decide) { url.focus(); return editorError(t("A base URL is needed"), "warn"); }
     if (endpoint && !body.chat && !body.responses) { endpoint.focus(); return editorError(t(pr.endpointNeeded || "Your resource's endpoint is needed"), "warn"); }
-    if (vertex && !body.vertex.project) { vertexProject?.focus({ preventScroll: true }); return editorError(t("Google Vertex AI needs the id of your Google Cloud project"), "warn"); }
+    if (vertex && !body.vertex.project) { vertexProject?.focus(NO_SCROLL); return editorError(t("Google Vertex AI needs the id of your Google Cloud project"), "warn"); }
     if (address) {
       const a = (draft.address || "").trim();
-      if (localAddress(a) === null) { address.focus({ preventScroll: true }); return editorError(t("Address: {v} isn't an address like http://localhost:11434", { v: a }), "warn"); }
+      if (localAddress(a) === null) { address.focus(NO_SCROLL); return editorError(t("Address: {v} isn't an address like http://localhost:11434", { v: a }), "warn"); }
       Object.assign(body, movedURLs(draft));
     }
     editorError("");
@@ -10129,12 +10133,12 @@ function compactField() {
 }
 
 function compactError(ed, v) {
-  shown(ed.querySelector("input.compacts"))?.focus({ preventScroll: true });
+  shown(ed.querySelector("input.compacts"))?.focus(NO_SCROLL);
   return editorError(t("Compact at: {v} is not a number of tokens like 272k", { v }), "warn");
 }
 
 function outputError(ed, v) {
-  shown(ed.querySelector("input.outputs"))?.focus({ preventScroll: true });
+  shown(ed.querySelector("input.outputs"))?.focus(NO_SCROLL);
   return editorError(t("Max output: {v} is not a number of tokens like 32k", { v }), "warn");
 }
 
@@ -10382,7 +10386,7 @@ function renderImportApps(ia) {
       status(t("Imported {n}: {names}", { n: r.added.length, names: r.added.join(", ") }), "ok");
     } catch (e) {
       go.classList.remove("busy");
-      if (!editorError(e.message, "err")) status(e.message, "err");
+      if (!editorError(e.message, "err")) statusErr(e);
     }
   };
   ed.append(bar);
@@ -10567,7 +10571,7 @@ function renderEndpoints(p, src) {
           s.append(el("span", "", x.account ? t("Tested {user}: {result}", { user: x.account, result }) : result));
           s.title = x.ok ? t("model {model}", { model: x.model }) : x.error;
         }
-      } catch (e) { for (const s of Object.values(slots)) { s.className = "res"; s.textContent = ""; } status(e.message, "err"); }
+      } catch (e) { for (const s of Object.values(slots)) { s.className = "res"; s.textContent = ""; } statusErr(e); }
       test.classList.remove("busy");
     };
     eps.append(test);
@@ -11177,7 +11181,7 @@ function renderModels(p) {
       naming = null;
       rename.classList.remove("on");
       drawNames();
-      rename.focus({ preventScroll: true });
+      rename.focus(NO_SCROLL);
     };
     head.append(el("b", "", t("Names & levels")), fold);
     names.append(head);
@@ -11324,7 +11328,7 @@ function renderModels(p) {
       const moreTier = el("button", "text action mtier-add", t("Long-context price"));
       moreTier.title = tierRow.title;
       let tierOpen = false;
-      moreTier.onclick = (e) => { e.preventDefault(); tierOpen = true; drawTier(); above.focus({ preventScroll: true }); };
+      moreTier.onclick = (e) => { e.preventDefault(); tierOpen = true; drawTier(); above.focus(NO_SCROLL); };
       const drawTier = () => {
         tierRow.hidden = !tierOpen && !tierNow() && !listTier;
         moreTier.hidden = !tierRow.hidden;
@@ -11627,7 +11631,7 @@ function renderModels(p) {
       // are put back by hand, which put them in whichever editor was open
       // by then, another provider's too (#464)
       await loadProviders();
-    } catch (e) { status(e.message, "err"); refresh.classList.remove("busy"); }
+    } catch (e) { statusErr(e); refresh.classList.remove("busy"); }
   };
   // each model the agents see gets a tiny request of its own: a vendor
   // that answers can still have a model that doesn't
@@ -11645,7 +11649,7 @@ function renderModels(p) {
       r.results.forEach((x, i) => { got[ids[i]] = x; });
       const i = r.results.findIndex((x) => !x.ok), x = r.results[i], bad = r.results.filter((x) => !x.ok).length;
       status(x ? t("{n} of {all} models didn't answer; {model}: {error}", { n: bad, all: ids.length, model: ids[i], error: (x.status ? x.status + " · " : "") + x.error }) : t("All {n} models answered", { n: ids.length }), x ? "err" : "ok");
-    } catch (e) { delete modelTests[p.id]; status(e.message, "err"); }
+    } catch (e) { delete modelTests[p.id]; statusErr(e); }
     testAll.classList.remove("busy");
     draw();
   };
@@ -11662,7 +11666,7 @@ function renderModels(p) {
       const error = (x.status ? x.status + " · " : "") + x.error;
       status(x.ok ? (via ? t("{model} answered via {api} in {took}", { model: id, api: via, took: ledTook(x.ms) }) : t("{model} answered in {took}", { model: id, took: ledTook(x.ms) }))
         : via ? t("{model} didn't answer via {api}: {error}", { model: id, api: via, error }) : t("{model} didn't answer: {error}", { model: id, error }), x.ok ? "ok" : "err");
-    } catch (e) { delete got[id]; status(e.message, "err"); }
+    } catch (e) { delete got[id]; statusErr(e); }
     draw();
   };
   const rename = el("button", "text action" + (naming === p.id ? " on" : ""), t("Names & levels"));
@@ -11683,7 +11687,7 @@ function renderModels(p) {
     forget.onclick = async () => {
       forget.classList.add("busy");
       try { await api("provider/unfetch", { id: p.id }); await loadProviders(); } // the picks stay in the draft, as on a Fetch models
-      catch (e) { status(e.message, "err"); forget.classList.remove("busy"); }
+      catch (e) { statusErr(e); forget.classList.remove("busy"); }
     };
     foot.append(forget);
   }
@@ -12314,7 +12318,7 @@ function renderPluginAsk(sub) {
   form.append(inp, go);
   tt.append(form, why);
   box.append(close);
-  setTimeout(() => { if (inp.isConnected && !inp.disabled) inp.focus({ preventScroll: true }); });
+  setTimeout(() => { if (inp.isConnected && !inp.disabled) inp.focus(NO_SCROLL); });
   return box;
 }
 
@@ -12328,7 +12332,7 @@ function renderStepPlan(sp, id) {
     const side = el("div", "side");
     const out = el("button", "text", t("Sign out"));
     out.onclick = async () => {
-      try { providers = await api("stepfun/" + encodeURIComponent(id) + "/signout", {}); renderProviders(); } catch (e) { status(e.message, "err"); }
+      try { providers = await api("stepfun/" + encodeURIComponent(id) + "/signout", {}); renderProviders(); } catch (e) { statusErr(e); }
     };
     side.append(out);
     row.append(el("span", "state", t("Signed in · the Usage page shows the Step Plan")), side);
@@ -12361,7 +12365,7 @@ function renderStepPlan(sp, id) {
       status(t("Signed in to StepFun"), "ok");
     } catch (e) {
       go.disabled = paste.disabled = false;
-      status(e.message, "err");
+      statusErr(e);
     }
   };
   go.onclick = save;
@@ -12472,7 +12476,7 @@ function signInProxyForm(sub) {
   form.onsubmit = submit;
   go.onclick = submit;
   form.append(inp, go);
-  setTimeout(() => { if (inp.isConnected) inp.focus({ preventScroll: true }); });
+  setTimeout(() => { if (inp.isConnected) inp.focus(NO_SCROLL); });
   return form;
 }
 
@@ -12532,7 +12536,7 @@ function renderCopilotGHE(sub) {
   back.title = t("Sign in on github.com instead");
   back.onclick = () => startSignIn("copilot", true);
   box.append(close, back);
-  setTimeout(() => { if (inp.isConnected) inp.focus({ preventScroll: true }); });
+  setTimeout(() => { if (inp.isConnected) inp.focus(NO_SCROLL); });
   return box;
 }
 
@@ -12813,7 +12817,7 @@ function arrangeAccountRows(list, p) {
     const focus = document.activeElement === row;
     list.insertBefore(row, to > from ? current[to].nextSibling : current[to]);
     current.splice(to, 0, ...current.splice(from, 1));
-    if (focus) row.focus({ preventScroll: true });
+    if (focus) row.focus(NO_SCROLL);
     let order = current.map((r) => r.dataset.accountId);
     // a folded list (keyFold) sends every key: the shown ones take the
     // places they had among them, the others stay where they were
@@ -12831,12 +12835,12 @@ function arrangeAccountRows(list, p) {
       // Reconcile with the backend rather than claiming a local rollback undid it.
       try { providers = await api("providers"); } catch (_) { /* keep the last known list */ }
       accountRenderPending = true;
-      status(e.message, "err");
+      statusErr(e);
     } finally {
       accountSaving = false;
       list.removeAttribute("aria-busy");
       accountArrangementDone();
-      if (focus) document.querySelector(`.accts [data-account-id="${CSS.escape(row.dataset.accountId)}"]`)?.focus({ preventScroll: true });
+      if (focus) document.querySelector(`.accts [data-account-id="${CSS.escape(row.dataset.accountId)}"]`)?.focus(NO_SCROLL);
     }
   };
   for (const row of rows) {
@@ -13760,7 +13764,7 @@ function windowCapMeter(m, p, user, w) {
     i.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") finish(true); else if (e.key === "Escape") finish(false); };
     i.onblur = () => finish(true);
     b.replaceWith(i);
-    i.focus({ preventScroll: true });
+    i.focus(NO_SCROLL);
   };
   b.onclick = (e) => {
     e.stopPropagation();
@@ -13811,7 +13815,7 @@ function accountCapPill(p, user, cap, direct) {
     i.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") finish(true); else if (e.key === "Escape") finish(false); };
     i.onblur = () => finish(true);
     pill.replaceWith(i);
-    i.focus({ preventScroll: true });
+    i.focus(NO_SCROLL);
   };
   pill.onclick = (e) => {
     e.stopPropagation();
@@ -13893,7 +13897,7 @@ function laneLimitPill(p, ref, who, name) {
     i.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") finish(true); else if (e.key === "Escape") finish(false); };
     i.onblur = () => finish(true);
     pill.replaceWith(i);
-    i.focus({ preventScroll: true });
+    i.focus(NO_SCROLL);
   };
   pill.onclick = (e) => {
     e.stopPropagation();
@@ -14091,7 +14095,7 @@ async function setQuotaLeft(on) {
     state.settings = prefs;
     if (view === "settings") renderSettings();
   } catch (e) {
-    status(e.message, "err");
+    statusErr(e);
   }
 }
 
@@ -14150,7 +14154,7 @@ async function accountAction(path, body, okMsg, confirmed = false) {
     saidMoved(okMsg);
     return true;
   } catch (e) {
-    if (!editorError(e.message, "err")) status(e.message, "err");
+    if (!editorError(e.message, "err")) statusErr(e);
     document.querySelector(".editor .busy")?.classList.remove("busy");
     return false;
   }
@@ -14256,7 +14260,7 @@ function keyWeight(p, k, w, total) {
     i.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") save(true); else if (e.key === "Escape") save(false); };
     i.onblur = () => save(true);
     b.replaceWith(i);
-    i.focus({ preventScroll: true });
+    i.focus(NO_SCROLL);
     i.select();
   };
   return b;
@@ -14314,7 +14318,7 @@ function renderKeyAccounts(p) {
       const shown = row.querySelector(".plan.mono");
       if (shown) shown.replaceWith(i);
       else name.after(i);
-      i.focus({ preventScroll: true });
+      i.focus(NO_SCROLL);
     };
     // a double-click on the row is the shortcut, away from its controls
     row.ondblclick = (e) => { if (!e.target.closest("button, input, textarea, .acct-models")) edit.onclick(e); };
@@ -14325,7 +14329,7 @@ function renderKeyAccounts(p) {
     cp.append(svg(COPY_ICON, 12, 1.5));
     cp.onclick = async (e) => {
       e.stopPropagation();
-      try { copy((await api("provider/key", { id: p.id, account: k.id })).key, k.name || k.masked, cp); } catch (err) { status(err.message, "err"); }
+      try { copy((await api("provider/key", { id: p.id, account: k.id })).key, k.name || k.masked, cp); } catch (err) { statusErr(err); }
     };
     row.append(cp, edit);
     // one the gateway passes over after a failure: why, and until when, on
@@ -14346,7 +14350,7 @@ function renderKeyAccounts(p) {
           k.rest = null;
           renderProviders();
           status(t("{key} is asked again from the next request", { key: k.name || k.masked }), "ok");
-        } catch (err) { go.classList.remove("busy"); status(err.message, "err"); }
+        } catch (err) { go.classList.remove("busy"); statusErr(err); }
       };
       restLine = el("div", "key-rest-line");
       restLine.append(r, go);
@@ -14413,7 +14417,7 @@ function renderKeyAccounts(p) {
         providers = await api("keys/import", { id: p.id, key: keys.value, protocol: addingKey.protocol || "" });
       } catch (e) {
         doneSaving(add);
-        if (!editorError(e.message, "err")) status(e.message, "err");
+        if (!editorError(e.message, "err")) statusErr(e);
         return;
       }
       const { added = 0, had = 0 } = providers;
@@ -14436,7 +14440,7 @@ function renderKeyAccounts(p) {
     bar.append(count, el("span", "grow"), x, add);
     box.append(keys, bar);
     list.append(box);
-    queueMicrotask(() => keys.focus({ preventScroll: true }));
+    queueMicrotask(() => keys.focus(NO_SCROLL));
   } else if (addingKey?.id === p.id) {
     const box = el("div", "acc adding");
     // the key is what's needed; a name is only for telling keys apart
@@ -14586,7 +14590,7 @@ function keyFoldRows(p, fold) {
   return { before: [bar], after };
 }
 function focusKeyFilter(id) {
-  document.querySelector(`.keys-filter[data-provider="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+  document.querySelector(`.keys-filter[data-provider="${CSS.escape(id)}"]`)?.focus(NO_SCROLL);
 }
 
 // splitKeys is the keys in text pasted at once, as provider.SplitKeys
@@ -14667,7 +14671,7 @@ function pickPill(opts, value, dflt, title, head, onChange) {
 let pointerAt = "";
 addEventListener("mousemove", (e) => { pointerAt = e.screenX + "," + e.screenY; }, true);
 function hoverFocus(b) {
-  b.onmouseenter = (e) => { if (e.screenX + "," + e.screenY !== pointerAt) b.focus({ preventScroll: true }); };
+  b.onmouseenter = (e) => { if (e.screenX + "," + e.screenY !== pointerAt) b.focus(NO_SCROLL); };
 }
 let protoMenu = null;
 function closeProtoMenu() {
@@ -14766,7 +14770,7 @@ function openProtoMenu(anchor, opts, value, choose, head = "Protocol this key sp
       items.forEach((it, i) => tick(it, opts[i]));
       if (live) {
         choose(opts.map((o) => o.v).filter((v) => picked.includes(v)));
-        b.focus({ preventScroll: true });
+        b.focus(NO_SCROLL);
       }
     };
     hoverFocus(b);
@@ -14814,7 +14818,7 @@ function openProtoMenu(anchor, opts, value, choose, head = "Protocol this key sp
     choose(opts.map((o) => o.v).filter((v) => picked.includes(v)));
   } : null;
   protoMenu = { box, anchor, outside, keys, scroll, done };
-  (filter || items.find((b) => b.classList.contains("on")) || items[0]).focus({ preventScroll: true });
+  (filter || items.find((b) => b.classList.contains("on")) || items[0]).focus(NO_SCROLL);
 }
 
 // keyPill is a key provider's row badge: the key in use, or how many are.
@@ -15067,11 +15071,11 @@ async function providerAction(action, body, okMsg, base = "provider/") {
         if (!providers.providers.some((p) => p.id === editing)) {
           editing = null; draft = null;
           renderProviders();
-          return status(e.message, "err");
+          return statusErr(e);
         }
       } catch { /* the error below says enough */ }
     }
-    if (!editorError(e.message, "err")) status(e.message, "err");
+    if (!editorError(e.message, "err")) statusErr(e);
     for (const b of document.querySelectorAll(".editor .busy")) doneSaving(b);
   }
 }
@@ -15242,7 +15246,7 @@ function closeAddSheet() {
     // back from stepping aside now, not when the observer next looks, so it
     // can take the focus
     view.querySelector(".after-list").classList.remove("away");
-    $("#addProvider").focus({ preventScroll: true });
+    $("#addProvider").focus(NO_SCROLL);
   });
 }
 $("#addSheet").addEventListener("click", (e) => {
@@ -15982,7 +15986,7 @@ function usageHandle(sub, card) {
     const keys = usageKeys();
     moveUsage(sub.provider, keys.indexOf(sub.provider) + step);
     // the cards were drawn anew: keep the keyboard on this one
-    $(`#subscriptionUsage > [data-key="${CSS.escape(sub.provider)}"] .us-handle`)?.focus({ preventScroll: true });
+    $(`#subscriptionUsage > [data-key="${CSS.escape(sub.provider)}"] .us-handle`)?.focus(NO_SCROLL);
   };
   b.onpointerdown = (e) => {
     if (usageArranging) return;
@@ -16017,7 +16021,7 @@ async function moveUsage(key, to) {
   } catch (e) {
     state.settings = prev;
     renderQuotas();
-    status(e.message, "err");
+    statusErr(e);
   }
 }
 
@@ -17108,12 +17112,12 @@ function renderPanelQuota(lazy) {
   const arrange = el("button", "pq-more pq-arrange", t("Arrange"));
   arrange.type = "button";
   arrange.title = t("Choose which subscriptions this tab shows, and their order");
-  arrange.onclick = () => { panelArranging = true; panelPeek = ""; renderPanelQuota(); $("#panelQuota .pq-arow .pq-ahandle")?.focus({ preventScroll: true }); };
+  arrange.onclick = () => { panelArranging = true; panelPeek = ""; renderPanelQuota(); $("#panelQuota .pq-arow .pq-ahandle")?.focus(NO_SCROLL); };
   foot.append(arrange);
   if (away.size) foot.append(el("span", "pq-hidden", t("{n} hidden", { n: away.size })));
   box.append(foot);
   restoreFlash();
-  if (focused) box.querySelector(`.pq-card[data-card="${CSS.escape(focused)}"] .quota-refresh`)?.focus({ preventScroll: true });
+  if (focused) box.querySelector(`.pq-card[data-card="${CSS.escape(focused)}"] .quota-refresh`)?.focus(NO_SCROLL);
   if (view && view.scrollTop !== keep && !box.querySelector(".pq-card.flash")) view.scrollTop = keep;
   panelAge();
   fit();
@@ -17200,7 +17204,7 @@ function panelArrange(subs) {
       if (!e.altKey || !step) return;
       e.preventDefault();
       moveUsage(q.provider, usageKeys().indexOf(q.provider) + step);
-      $(`#panelQuota .pq-arow[data-key="${CSS.escape(q.provider)}"] .pq-ahandle`)?.focus({ preventScroll: true });
+      $(`#panelQuota .pq-arow[data-key="${CSS.escape(q.provider)}"] .pq-ahandle`)?.focus(NO_SCROLL);
     };
     h.onpointerdown = (e) => {
       if (usageArranging) return;
@@ -17230,7 +17234,7 @@ async function hidePanelUsage(key, hide) {
   state.settings = { ...prev, panelUsageHidden: panelHidden };
   const again = () => {
     renderPanelQuota();
-    $(`#panelQuota .pq-arow[data-key="${CSS.escape(key)}"] .pq-show`)?.focus({ preventScroll: true });
+    $(`#panelQuota .pq-arow[data-key="${CSS.escape(key)}"] .pq-show`)?.focus(NO_SCROLL);
   };
   again();
   try {
@@ -17239,7 +17243,7 @@ async function hidePanelUsage(key, hide) {
   } catch (e) {
     state.settings = prev;
     again();
-    status(e.message, "err");
+    statusErr(e);
   }
 }
 
@@ -17369,7 +17373,7 @@ function panelQuotaCard(q) {
       if (folded) panelOptsFolded.delete(id); else panelOptsFolded.add(id);
       keep("panelOptsFolded", [...panelOptsFolded]);
       renderPanelQuota();
-      $(`#panelQuota .pq-card[data-card="${CSS.escape(id)}"] .pq-opts-fold`)?.focus({ preventScroll: true });
+      $(`#panelQuota .pq-card[data-card="${CSS.escape(id)}"] .pq-opts-fold`)?.focus(NO_SCROLL);
     };
     if (folded) {
       const row = el("div", "pq-autoreset pq-opts-brief");
@@ -17595,7 +17599,7 @@ function autoResetButton(q, c) {
       if ($("#codexAutoResetRow")) renderAutoResetOwn(prefs); // Settings › Usage says the same
     } catch (err) {
       b.disabled = false;
-      status(err.message, "err");
+      statusErr(err);
     }
   };
   return b;
@@ -17653,7 +17657,7 @@ function creditsButton(q) {
       renderQuotas();
     } catch (err) {
       b.disabled = false;
-      status(err.message, "err");
+      statusErr(err);
     }
   };
   return b;
@@ -17795,7 +17799,7 @@ function checkinRow(q, first, subs) {
       renderQuotas();
     } catch (err) {
       auto.disabled = false;
-      status(err.message, "err");
+      statusErr(err);
     }
   };
   row.append(auto);
@@ -17818,7 +17822,7 @@ function checkinRow(q, first, subs) {
         const said = checkinPressSaid(rs);
         status(said.text, said.bad ? "err" : "ok");
       } catch (err) {
-        status(err.message, "err");
+        statusErr(err);
       }
       loadQuotas();
     };
@@ -17888,7 +17892,7 @@ function askReset(q) {
     } catch (err) {
       go.disabled = false;
       go.classList.remove("busy");
-      status(err.message, "err");
+      statusErr(err);
     }
   };
   const cancel = el("button", "text", t("Cancel"));
@@ -17905,7 +17909,7 @@ function cancelAsk(e) { e.stopPropagation(); closeConfirmAsk(); }
 // THIRD_PARTY_NOTICES, which every build carries
 async function showNotices() {
   let text;
-  try { text = (await api("notices")).text; } catch (e) { status(e.message, "err"); return; }
+  try { text = (await api("notices")).text; } catch (e) { statusErr(e); return; }
   const ed = el("div", "editor wide notices");
   const head = el("div", "ehead");
   head.append(el("b", "", t("Open-source licenses")));
@@ -17917,7 +17921,7 @@ async function showNotices() {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  ok.focus({ preventScroll: true });
+  ok.focus(NO_SCROLL);
 }
 function closeConfirmAsk() {
   if (!confirmAsk) return;
@@ -18074,7 +18078,7 @@ function keepQuotaRefresh(box) {
   for (const b of shown) b.classList.add("kept");
   return () => {
     keptQuotaRefresh = null;
-    if (focused?.isConnected) focused.focus({ preventScroll: true });
+    if (focused?.isConnected) focused.focus(NO_SCROLL);
     // a frame for the new hover state, so the reading doesn't slide
     requestAnimationFrame(() => { for (const b of shown) b.classList.remove("kept"); });
   };
@@ -18136,7 +18140,7 @@ function quotaRefresh(q) {
         for (const x of [q, ...before, ...quotas]) if (belongs(x)) quotaRefreshVersions.set(usageAcctKey(x), version);
       }
     } catch (err) {
-      status(err.message, "err");
+      statusErr(err);
     } finally {
       // the reading now; the icon ends its turn (at least one)
       renderQuotas();
@@ -18642,7 +18646,7 @@ function drawLedColumns(box, l, split, metric, compact, chooseDay, focusDay) {
     }
   };
   box.emphasize(null);
-  if (focusDay) box.querySelector(`.led-day[data-day="${CSS.escape(focusDay)}"]`)?.focus({ preventScroll: true });
+  if (focusDay) box.querySelector(`.led-day[data-day="${CSS.escape(focusDay)}"]`)?.focus(NO_SCROLL);
 }
 
 // the ranking: who the requests were of, by the metric, the most first —
@@ -18843,7 +18847,7 @@ function openSessCombo(anchor, all, opts, value, choose, head) {
       if (o) o.click();
     } else if (i >= 0 && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
       // typing on a row goes on in the search
-      q.focus({ preventScroll: true });
+      q.focus(NO_SCROLL);
     }
   };
   document.addEventListener("mousedown", outside, true);
@@ -18851,7 +18855,7 @@ function openSessCombo(anchor, all, opts, value, choose, head) {
   document.addEventListener("scroll", scroll, true);
   addEventListener("resize", closeProtoMenu);
   protoMenu = { box, anchor, outside, keys, scroll };
-  q.focus({ preventScroll: true });
+  q.focus(NO_SCROLL);
 }
 
 const THEMES = [["system", "System"], ["light", "Light"], ["dark", "Dark"]];
@@ -18888,7 +18892,7 @@ async function setTextSize(n) {
     state.settings = prefs;
     if (view === "settings") renderSettings();
   } catch (e) {
-    status(e.message, "err");
+    statusErr(e);
   }
 }
 // Ctrl/Cmd + = and − step through the sizes, 0 goes back to 100%, in the
@@ -19193,7 +19197,7 @@ function tabKeys(tabs, sel) {
     e.preventDefault();
     e.stopPropagation();
     const b = shown[(j + shown.length) % shown.length];
-    b.focus({ preventScroll: true });
+    b.focus(NO_SCROLL);
     b.click();
   };
 }
@@ -19465,14 +19469,14 @@ function renderUpdateMirror(r, s) {
   const save = el("button", "text", t("Save"));
   save.onclick = () => {
     const v = i.value.trim();
-    if (!v) return i.focus({ preventScroll: true });
+    if (!v) return i.focus(NO_SCROLL);
     setUpdateMirror(v).catch((e) => { mirrorErr = t(e.message); status(t(e.message), "err"); renderSettings(); });
   };
   const cancel = el("button", "text", t("Cancel"));
   cancel.onclick = () => { mirrorEditing = false; mirrorDraft = mirrorErr = ""; renderUpdateMirror(r, s); };
   i.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") save.onclick(); else if (e.key === "Escape") cancel.onclick(); };
   val.append(i, cancel, save);
-  queueMicrotask(() => { if (i.isConnected && document.activeElement !== i) i.focus({ preventScroll: true }); });
+  queueMicrotask(() => { if (i.isConnected && document.activeElement !== i) i.focus(NO_SCROLL); });
 }
 
 function renderSettings() {
@@ -19658,7 +19662,7 @@ function renderSettings() {
     segs([["off", t("Off")], ["on", t("On")]], s.autoRestart ? "on" : "off", (v) => savePrefs({ ...keep, autoRestart: v === "on" }))).classList.add("update-restart-row", ...(s.noAutoUpdate ? ["off"] : []));
   renderUpdateMirror(row(t("Download source"), "", ""), s);
   const open = el("button", "text", t("Open"));
-  open.onclick = () => api("settings/reveal", {}).catch((e) => status(e.message, "err"));
+  open.onclick = () => api("settings/reveal", {}).catch(statusErr);
   // portable (a data folder beside magpie, #508): everything is in there
   row(t("Config folder"), s.portable ? t("Portable: everything magpie keeps, in the data folder beside it") : t("providers, profiles and these settings"), s.dir, copyBtn(s.dir, t("Path")), open);
   renderCLI(row(t("Command line"), t("Checking your shells…"), ""));
@@ -19924,7 +19928,7 @@ function askRestore(v, parts) {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  cancel.focus({ preventScroll: true });
+  cancel.focus(NO_SCROLL);
 }
 
 // serverFileSaid: what the server holds where the backup should be, in the
@@ -19981,7 +19985,7 @@ function askUpload(f) {
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
-  cancel.focus({ preventScroll: true });
+  cancel.focus(NO_SCROLL);
 }
 
 // refreshAfterSync: what a sync or an import brought in reaches the other
@@ -20893,7 +20897,7 @@ function homeAgentPrefRows() {
 async function openAgentPrefs(a) {
   const ids = agentPrefsOf(a);
   if (!ids) return;
-  try { await loadSettings(); } catch (e) { return status(e.message, "err"); }
+  try { await loadSettings(); } catch (e) { return statusErr(e); }
   homeAgentPrefRows();
   const ed = el("div", "editor agent-prefs");
   const head = el("div", "ehead");
@@ -21334,7 +21338,7 @@ function renderSearch(s, keep) {
   };
   const set = (body, done) => writingPrefs(api("settings/search-api", body))
     .then((ns) => { prefs = ns; searchDraft.err = ""; done?.(); renderSettings(); status(t("Saved"), "ok", 1500); })
-    .catch((e) => { searchDraft.err = e.message; status(e.message, "err"); renderSettings(); });
+    .catch((e) => { searchDraft.err = e.message; statusErr(e); renderSettings(); });
   const vendors = s.searchVendors || [];
   const d = searchDraft;
   if (!vendors.some((v) => v.id === d.vendor)) d.vendor = vendors[0]?.id || "";
@@ -21419,7 +21423,7 @@ function renderSearch(s, keep) {
       eye.onclick = async () => {
         const sub = r.querySelector(".sub");
         if (eye.textContent === t("Show")) {
-          try { sub.textContent = [(await api("settings/search-key", { vendor: a.vendor })).key, a.url].filter(Boolean).join(" · "); } catch (e) { status(e.message, "err"); return; }
+          try { sub.textContent = [(await api("settings/search-key", { vendor: a.vendor })).key, a.url].filter(Boolean).join(" · "); } catch (e) { statusErr(e); return; }
           sub.classList.add("revealed");
           eye.textContent = t("Hide");
         } else {
@@ -21430,7 +21434,7 @@ function renderSearch(s, keep) {
       };
       const cp = el("button", "text search-copy", t("Copy"));
       cp.onclick = async () => {
-        try { copy((await api("settings/search-key", { vendor: a.vendor })).key, t("API key"), cp); } catch (e) { status(e.message, "err"); }
+        try { copy((await api("settings/search-key", { vendor: a.vendor })).key, t("API key"), cp); } catch (e) { statusErr(e); }
       };
       tools.unshift(eye, cp);
     }
@@ -21496,9 +21500,9 @@ function searchArrange(box, units, set) {
       const name = u.querySelector(".search-api .name");
       if (name) name.textContent = name.textContent.replace(/^\d+\./, `${i + 1}.`);
     });
-    if (focus) unit.focus({ preventScroll: true });
+    if (focus) unit.focus(NO_SCROLL);
     set({ arrange: order }, () => {
-      if (focus) requestAnimationFrame(() => document.querySelector(`#searchList .search-unit[data-vendor="${CSS.escape(unit.dataset.vendor)}"]`)?.focus({ preventScroll: true }));
+      if (focus) requestAnimationFrame(() => document.querySelector(`#searchList .search-unit[data-vendor="${CSS.escape(unit.dataset.vendor)}"]`)?.focus(NO_SCROLL));
     });
     // a refused order: set draws the page again from what is saved, the
     // order as it was
@@ -22216,7 +22220,7 @@ function renderRedactRules(s, row) {
   const rules = s.redactRules || [];
   const set = (next, done) => writingPrefs(api("settings/redact-rules", { rules: next }))
     .then((ns) => { prefs = ns; ruleDraft.err = ""; done?.(); renderSettings(); status(t("Saved"), "ok", 1500); })
-    .catch((e) => { ruleDraft.err = e.message; status(e.message, "err"); renderSettings(); });
+    .catch((e) => { ruleDraft.err = e.message; statusErr(e); renderSettings(); });
   const d = ruleDraft;
   const kind = input(d.kind, "API_KEY");
   const match = input(d.match, d.by === "prefix" ? "oc_sk_" : "oc_sk_[A-Za-z0-9]{20,}");
@@ -22252,7 +22256,7 @@ function renderRedactRules(s, row) {
     ed.onclick = () => {
       ruleEdit = { at: n, was: r, kind: r.kind || "", by: r.regex ? "regex" : "prefix", match: r.regex || r.prefix || "", err: "" };
       renderSettings();
-      $("#redactList input.rule-match.editing")?.focus({ preventScroll: true });
+      $("#redactList input.rule-match.editing")?.focus(NO_SCROLL);
     };
     const x = el("button", "text", t("Remove"));
     x.onclick = () => set(rules.filter((_, i) => i !== n));
@@ -22458,7 +22462,7 @@ function editRedactRule(r, n, row) {
   cancel.onclick = () => { ruleEdit = null; renderSettings(); };
   save.onclick = () => {
     d.kind = kind.value; d.match = match.value.trim();
-    if (!d.match) return match.focus({ preventScroll: true });
+    if (!d.match) return match.focus(NO_SCROLL);
     const rule = { kind: d.kind.trim(), [d.by === "prefix" ? "prefix" : "regex"]: d.match };
     save.disabled = true;
     writingPrefs(api("settings/redact-rule", { at: n, was: d.was, rule }))
@@ -22711,7 +22715,7 @@ function renderPluginCheckins(s) {
         state.settings = prefs;
         renderPluginCheckins(prefs);
       } catch (err) {
-        status(err.message, "err");
+        statusErr(err);
       }
     }));
     row.append(who, segBox);
@@ -22815,7 +22819,7 @@ function savePrefs(body) {
       if (state) state.settings = prefs;
     } catch (e) {
       failed = true;
-      status(e.message, "err");
+      statusErr(e);
     }
     if (--prefsQueued) return;
     // what is saved, a choice that failed put back
@@ -23313,11 +23317,11 @@ async function show(v) {
   if (v !== "providers" && editing !== null) cancelEdit(true);
   // a plugin's page loads what it shows; back once it has
   magpie.call(v, "open")?.then?.(back);
-  if (v === "providers" || v === "routing" || providersPage(v)) loadProviders().then(back, (e) => status(e.message, "err"));
+  if (v === "providers" || v === "routing" || providersPage(v)) loadProviders().then(back, statusErr);
   // Routing's accounts show their windows as the Usage page read them
   // (#1833): what is kept, read in an ordinary way, never an asked read
   if (v === "routing" && (!quotas || Date.now() - quotasAt > 60e3)) loadQuotas();
-  if (v === "settings") loadSettings().then(back, (e) => status(e.message, "err"));
+  if (v === "settings") loadSettings().then(back, statusErr);
   if (v === "plugins") window.loadPlugins?.()?.then(back);
   syncTitle();
   syncURL();

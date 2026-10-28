@@ -975,7 +975,10 @@
     if (gh.length) out.push(ghSection(gh));
     else if (!tagged) out.push(ghWaiting());
     else if (taggedErr && !tagged.length) out.push(ghFailed());
-    const known = new Set([...listings.map((l) => l.package), ...(tagged || []).map((l) => l.github.package).filter(Boolean)]);
+    // npm's card goes where a card above is its package (a listing, or a
+    // tagged repository npm has), not where a repository's package.json
+    // only names it (#3685)
+    const known = new Set([...listings.map((l) => l.package), ...(tagged || []).map((l) => l.package)]);
     const box = el("section", "pm-sec");
     const h = el("div", "pm-sechead");
     h.append(el("h3", "", t("On npm")), el("span", "", t("OpenCode plugins and pi packages anyone published — read what one does before you install it")));

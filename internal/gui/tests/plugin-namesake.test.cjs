@@ -18,8 +18,11 @@
 // whichever spec names it (GitHub's shorthand, its page, a git URL over
 // https, ssh with a user, scp's colon or a port, ssh.github.com, git://,
 // owner/repo, another case and a ref), and the other of its package reads
-// Install, which asks, naming the spec installed. English and Chinese. The
-// API is faked.
+// Install, which asks, naming the spec installed. English and Chinese.
+//
+// A search shows npm's package of that name, which neither repository is,
+// and leaves out npm's card of a package npm has from a repository on the
+// page. Five languages, wide and 440px. The API is faked.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -327,6 +330,46 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
               await dlg.waitFor({ state: "detached" });
               assert.deepEqual(asked, []);
               assert.equal(await sec.locator(".pm-card.have").count(), 1);
+              assert.deepEqual(errors, []);
+            } finally { await page.close(); }
+          });
+        }
+      } finally { await ctx.close(); }
+    }
+  });
+  test(engine + ": a search shows npm's package of a name a repository's package.json gives", async (t) => {
+    const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || "chromium" }));
+    t.after(() => browser.close());
+    const OWN = repo("mu-zi-lee", PKG, PKG, 12);
+    // npm has this one's package from it: its card is npm's
+    const NPMS = { ...repo("griffinmartin", "opencode-claude-auth", "opencode-claude-auth", 1301), spec: "opencode-claude-auth" };
+    for (const lang of Object.keys(L)) {
+      const w = L[lang];
+      const ctx = await browser.newContext({ viewport: { width: 980, height: 860 } });
+      await ctx.addInitScript(counting);
+      try {
+        for (const width of [980, 440]) {
+          await t.test(lang + " " + width, async () => {
+            const page = await ctx.newPage();
+            try {
+              await page.setViewportSize({ width, height: 860 });
+              page.setDefaultTimeout(5000);
+              const errors = [];
+              page.on("pageerror", (e) => errors.push(e.message));
+              await page.route("**/*", server(lang, {
+                installed: [{ spec: OWN.spec, package: PKG }], repos: [OWN, NAMESAKE, NPMS],
+                hits: [HIT, { package: NPMS.spec, version: "2.2.1", description: "Claude for OpenCode", publisher: "griffinmartin", weekly: 9000 }],
+              }, []));
+              await page.goto("http://magpie.test/?view=plugins", { timeout: 30000 });
+              const view = page.locator("#view-plugins");
+              await view.waitFor({ state: "visible" });
+              await settled(page);
+              await view.locator(".pm-find:not(.pm-ghfind) input").fill("free-model");
+              const npm = view.locator(".pm-sec", { has: page.locator("h3", { hasText: w.onNpm }) });
+              await npm.locator(".pm-card .pm-act.get").waitFor();
+              await settled(page);
+              assert.deepEqual(await npm.locator(".pm-card .pm-name b").allInnerTexts(), [PKG], "npm's package of the name, and not npm's card of a repository on the page");
+              assert.equal(await view.locator(".pm-sec", { has: page.locator("h3", { hasText: w.section }) }).locator(".pm-card.have").count(), 1);
               assert.deepEqual(errors, []);
             } finally { await page.close(); }
           });

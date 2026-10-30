@@ -422,6 +422,141 @@ func TestWSLStoppedUnseen(t *testing.T) {
 	}
 }
 
+// instrRow is the agent id's row on the Instructions page, nil for none.
+func instrRow(t *testing.T, id string) *AgentInstructions {
+	t.Helper()
+	iv, err := ReadInstructions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := Read(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the page's whole read and the one after an instructions change agree
+	if len(v.Instructions.Agents) != len(iv.Agents) {
+		t.Errorf("Read lists %d instructions rows, ReadInstructions %d", len(v.Instructions.Agents), len(iv.Agents))
+	}
+	for _, a := range iv.Agents {
+		if a.Agent == id {
+			return &a
+		}
+	}
+	return nil
+}
+
+// #4182: the Instructions page left a stopped distro's agents out, so
+// none could be switched on until WSL ran, and a switch on the page sent
+// the agents without them. They are listed at the file magpie last saw
+// them read, switched as the library has them, and a switch is written
+// into the distro once it runs (Woken), on or off. Nothing of the distro
+// is opened or run while it is stopped (#3896): not even its file, whose
+// own lines aren't counted then.
+func TestWSLStoppedInstructions(t *testing.T) {
+	const distro = "Ubuntu-24.04"
+	h := wslSandbox(t)
+	agentsMD := filepath.Join(h, ".codex", "AGENTS.md")
+	write(t, agentsMD, "Mine.\n")
+	shared := "Be brief."
+	// the distro seen running, nothing of the library given to it
+	ok(t)(SaveInstructions(InstructionsChange{Shared: &shared, Agents: []string{"claude"}}))
+	if r := instrRow(t, wslCodex); r == nil || r.Asleep != "" || r.Own != 1 {
+		t.Fatalf("Codex while running: %+v", r)
+	}
+	root := filepath.Dir(filepath.Dir(h))
+	away := root + ".away"
+	stop := func() {
+		t.Helper()
+		agent.StopFakeWSL(distro)
+		// the distro's files gone from reach: anything opened there fails,
+		// anything written there makes its folder again
+		if err := os.Rename(root, away); err != nil {
+			t.Fatal(err)
+		}
+		if res, err := Woken(); res != nil || err != nil {
+			t.Errorf("a sync while the distro is stopped: %+v %v", res, err)
+		}
+	}
+	start := func() {
+		t.Helper()
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Errorf("something was written into the stopped distro: %v", err)
+		}
+		if err := os.Rename(away, root); err != nil {
+			t.Fatal(err)
+		}
+		agent.StartFakeWSL(distro)
+		if res, err := Woken(); err != nil || res == nil {
+			t.Fatalf("no sync once the distro ran: %+v %v", res, err)
+		}
+	}
+	stop()
+	runs := agent.FakeWSLRuns(distro)
+	cx := instrRow(t, wslCodex)
+	if cx == nil {
+		t.Fatal("a stopped distro's Codex isn't on the Instructions page")
+	}
+	if cx.Asleep != distro || cx.Unseen || cx.On || cx.Path != agentsMD || cx.Own != 0 || cx.Edited || cx.Override != "" {
+		t.Errorf("Codex while stopped: %+v", *cx)
+	}
+	if cl := instrRow(t, wslClaude); cl == nil || cl.Asleep != distro || cl.Path != filepath.Join(h, ".claude", "CLAUDE.md") {
+		t.Errorf("Claude Code while stopped: %+v", cl)
+	}
+	if id, err := Takes("Codex · WSL "+distro, "instructions"); err != nil || id != wslCodex {
+		t.Errorf("Takes while stopped: %s %v", id, err)
+	}
+	// switched on while stopped: kept, and on the page as on
+	ok(t)(SaveInstructions(InstructionsChange{Agents: []string{"claude", wslCodex}}))
+	if l, _ := load(); !slices.Equal(l.Instructions.Agents, []string{"claude", wslCodex}) {
+		t.Errorf("the agents: %v", l.Instructions.Agents)
+	}
+	if r := instrRow(t, wslCodex); r == nil || !r.On {
+		t.Errorf("Codex switched on while stopped: %+v", r)
+	}
+	if n := agent.FakeWSLRuns(distro); n != runs {
+		t.Errorf("%d commands ran in the stopped distro", n-runs)
+	}
+	start()
+	if s := read(t, agentsMD); !strings.HasPrefix(s, "Mine.\n") || !strings.Contains(s, "Be brief.") {
+		t.Errorf("codex@wsl AGENTS.md once the distro ran:\n%s", s)
+	}
+	if r := instrRow(t, wslCodex); r == nil || r.Asleep != "" || !r.On || r.Own != 1 {
+		t.Errorf("Codex once running: %+v", r)
+	}
+	// switched off while stopped: the part is taken out once it runs,
+	// though no agent of the distro is on any more
+	stop()
+	ok(t)(SaveInstructions(InstructionsChange{Agents: []string{"claude"}}))
+	start()
+	if s := read(t, agentsMD); s != "Mine.\n" {
+		t.Errorf("codex@wsl AGENTS.md once switched off and run:\n%s", s)
+	}
+}
+
+// One the library switched on in a distro that stopped before magpie
+// saw its file is listed as on, unseen, to be kept on; one never seen and
+// not on isn't listed.
+func TestWSLStoppedInstructionsUnseen(t *testing.T) {
+	const distro = "Ubuntu-24.04"
+	wslSandbox(t)
+	agent.All() // the probe, while it runs; no target is made
+	agent.StopFakeWSL(distro)
+	runs := agent.FakeWSLRuns(distro)
+	ok(t)(SaveInstructions(InstructionsChange{Agents: []string{wslPi}}))
+	if r := instrRow(t, wslPi); r == nil || !r.Unseen || !r.On || r.Asleep != distro || r.Path != "" {
+		t.Errorf("Pi switched on while stopped: %+v", r)
+	}
+	if r := instrRow(t, wslCodex); r != nil {
+		t.Errorf("Codex on nowhere, never seen: %+v", r)
+	}
+	if _, err := Takes("Codex · WSL "+distro, "instructions"); err == nil || !strings.Contains(err.Error(), "isn't running") {
+		t.Errorf("Takes of an unseen agent: %v", err)
+	}
+	if n := agent.FakeWSLRuns(distro); n != runs {
+		t.Errorf("%d commands ran in the stopped distro", n-runs)
+	}
+}
+
 func TestLinuxHome(t *testing.T) {
 	for in, want := range map[string]string{
 		`\\wsl.localhost\Ubuntu\home\me`: "/home/me",

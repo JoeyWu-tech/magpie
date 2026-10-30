@@ -77,9 +77,10 @@ magpie.plugin("library", (ctx) => {
   // has of the hub, and can't be read without starting it
   const hubAgents = () => mcpAgents().filter((a) => !a.asleep);
   // one line for each stopped WSL distro the page lists agents of: they
-  // show what magpie last saw, and a change waits for the distro to run
-  function asleepAsides() {
-    const seen = lib.agents.filter((a) => a.asleep && !isHidden(a));
+  // show what magpie last saw, and a change waits for the distro to run.
+  // The Instructions page passes its own rows' agents ({asleep, unseen,
+  // name}).
+  function asleepAsides(seen = lib.agents.filter((a) => a.asleep && !isHidden(a))) {
     return [...new Set(seen.map((a) => a.asleep))].map((d) => {
       const unseen = seen.filter((a) => a.asleep === d && a.unseen).map((a) => a.name);
       const p = el("p", "lib-aside lib-asleep", t("WSL {distro} isn't running: its agents show what magpie last saw there, and what you change is written there the next time it runs.", { distro: d }));
@@ -1334,8 +1335,11 @@ magpie.plugin("library", (ctx) => {
     for (const a of rows) list.append(...instructionsRow(a));
     if (!rows.length) list.append(el("div", "lib-none", t("None of your agents reads a user-wide instructions file magpie knows.")));
     body.append(list);
+    // a stopped WSL distro's agents are rows above when magpie saw their
+    // file; one it didn't see isn't said to keep none
     const skip = shownAgents().filter((a) => !a.instructions && !a.asleep);
     if (skip.length) body.append(el("p", "lib-aside", t(skip.length > 1 ? "{agents} keep no user-wide instructions file." : "{agents} keeps no user-wide instructions file.", { agents: skip.map((a) => a.name).join(", ") })));
+    body.append(...asleepAsides(rows.filter((a) => a.asleep)));
     body.append(bar);
   }
 
@@ -1463,14 +1467,20 @@ magpie.plugin("library", (ctx) => {
     return row;
   }
 
+  // An agent in a stopped WSL distro (asleep) is its row as magpie last saw
+  // it, greyer: its file isn't read or shown in the file manager, either of
+  // which would start WSL (#3896), and a switch is written there the next
+  // time it runs. One whose file magpie never saw (unseen) is listed only
+  // while it is on, its switch kept as it is (#4182).
   function instructionsRow(a) {
     const isOpen = open.has(a.agent);
-    const row = el("div", "row lib-row click" + (isOpen ? " open" : ""));
+    const row = el("div", "row lib-row click" + (isOpen ? " open" : "") + (a.asleep ? " asleep" : ""));
     const who = el("div", "who");
     const name = el("div", "name", a.name);
     who.append(name);
     const sub = el("div", "sub");
-    sub.append(pathLink(a.path));
+    if (a.asleep) { if (a.path) sub.append(el("span", "lib-path", tilde(a.path))); }
+    else sub.append(pathLink(a.path));
     who.append(sub);
     const tags = el("div", "lib-tags");
     const extra = extras[a.agent] ?? a.extra;
@@ -1480,7 +1490,8 @@ magpie.plugin("library", (ctx) => {
     if (a.own) tags.append(tag(a.own === 1 ? t("1 line of its own") : t("{n} lines of its own", { n: a.own }), "", t("The file has instructions besides magpie's part — they stay, and the agent reads both")));
     const chev = el("span", "chev");
     chev.append(svg(CHEV_R, 11, 1.7));
-    row.append(icon(a.icon), who, tags, toggle(a.on, t("{agent} reads the shared instructions", { agent: a.name }), (on) => {
+    const sw = toggle(a.on, t("{agent} reads the shared instructions", { agent: a.name }), (on) => {
+      if (a.unseen) return;
       const agents = lib.instructions.agents.filter((x) => (x.agent === a.agent ? on : x.on)).map((x) => x.agent);
       let done = t("Taken out of {agent}'s file", { agent: a.name });
       if (on && dirty()) done = t("{agent} is on — save to write the new text into its file", { agent: a.name });
@@ -1491,8 +1502,13 @@ magpie.plugin("library", (ctx) => {
           : t("{agent} is on — it gets the shared instructions once there are some", { agent: a.name });
       }
       else if (on) done = t("{agent} reads the shared instructions now", { agent: a.name });
+      if (a.asleep) done = asleepSaid;
       change("instructions/save", { agents }, done);
-    }), chev);
+    });
+    const asleepSaid = a.asleep && t("WSL {distro} isn't running: its agents show what magpie last saw there, and what you change is written there the next time it runs.", { distro: a.asleep });
+    if (a.unseen) { sw.setAttribute("aria-disabled", "true"); sw.title = t("WSL {distro} isn't running, and magpie hasn't seen {agent}'s files there yet: start the distro to change this", { distro: a.asleep, agent: a.name }); }
+    else if (a.asleep) sw.title = asleepSaid;
+    row.append(icon(a.icon), who, tags, sw, chev);
     row.onclick = () => { if (isOpen) open.delete(a.agent); else open.add(a.agent); render(); };
     if (!isOpen) return [row];
 

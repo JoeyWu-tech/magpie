@@ -619,6 +619,68 @@ func TestWSLStoppedHooks(t *testing.T) {
 	}
 }
 
+// wslSubagentAgents are the Subagents page's agents in WSL, by id.
+func wslSubagentAgents(t *testing.T) map[string]SubagentAgentView {
+	t.Helper()
+	v, err := Read(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := map[string]SubagentAgentView{}
+	for _, a := range v.SubagentAgents {
+		if strings.Contains(a.ID, "@wsl:") {
+			m[a.ID] = a
+		}
+	}
+	return m
+}
+
+// #4238: the Subagents page left a stopped distro's agents out, where
+// while it runs it lists those that take subagents here (Claude Code and
+// Codex) greyed, saying magpie gives no agent in WSL subagents yet. They
+// are listed the same while it is stopped, by what magpie saw there
+// (their shape), and a subagent given one says why, as while it runs.
+// There is nothing to write once the distro runs. Nothing of the distro
+// is opened or run while it is stopped (#3896).
+func TestWSLStoppedSubagents(t *testing.T) {
+	const distro = "Ubuntu-24.04"
+	h := wslSandbox(t)
+	running := wslSubagentAgents(t)
+	if len(running) != 2 || running[wslCodex].No == "" || !running[wslCodex].WSL || running[wslClaude].No == "" {
+		t.Fatalf("the WSL agents on the Subagents page while it runs: %+v", running)
+	}
+	agent.StopFakeWSL(distro)
+	root := filepath.Dir(filepath.Dir(h))
+	if err := os.Rename(root, root+".away"); err != nil {
+		t.Fatal(err)
+	}
+	runs := agent.FakeWSLRuns(distro)
+	if stopped := wslSubagentAgents(t); !reflect.DeepEqual(stopped, running) {
+		t.Errorf("the WSL agents on the Subagents page while it is stopped: %+v, while it ran: %+v", stopped, running)
+	}
+	l, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Subagents = append(l.Subagents, &Subagent{Name: "reviewer", Description: "Reviews a diff", Prompt: "Review it.", Agents: []string{wslClaude}})
+	if err := l.save(); err != nil {
+		t.Fatal(err)
+	}
+	v, err := Read(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Subagents) != 1 || v.Subagents[0].Problems[wslClaude] != running[wslClaude].No {
+		t.Errorf("a subagent given the stopped Claude Code: %+v", v.Subagents)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Errorf("something was written into the stopped distro: %v", err)
+	}
+	if n := agent.FakeWSLRuns(distro); n != runs {
+		t.Errorf("%d commands ran in the stopped distro", n-runs)
+	}
+}
+
 func TestLinuxHome(t *testing.T) {
 	for in, want := range map[string]string{
 		`\\wsl.localhost\Ubuntu\home\me`: "/home/me",

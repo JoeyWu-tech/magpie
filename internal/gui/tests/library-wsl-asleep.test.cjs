@@ -8,9 +8,10 @@
 // rows that name it, greyed out, kept by every click on the row, and a
 // click on it says why. One line under the list names the distro. Nothing
 // here starts WSL (#3896): the page only reads /api/library. The
-// Instructions page lists them the same way (#4182), and the Hooks page
-// as while the distro runs (#4237). Chromium and WebKit, 1100px and
-// 390px, in en, zh, zh-TW, ja and de. No backend: the API is faked here.
+// Instructions page lists them the same way (#4182), and the Hooks and
+// Subagents pages as while the distro runs (#4237, #4238). Chromium and
+// WebKit, 1100px and 390px, in en, zh, zh-TW, ja and de. No backend: the
+// API is faked here.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -250,18 +251,25 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
   });
 }
 
-// #4237: the Hooks page lists the stopped distro's Codex as it does while
-// the distro runs: its chip greyed, saying magpie gives no agent in WSL
-// hooks yet, named in the line under the list, and a click on it sends
-// nothing. Pi, whose places magpie never saw, isn't on a row that doesn't
-// name it. The page draws what /api/library says (hooksView lists the
-// stopped agents); this holds it to that.
+// #4237, #4238: the Hooks and Subagents pages list the stopped distro's
+// Codex as they do while the distro runs: its chip greyed, saying magpie
+// gives no agent in WSL any yet, named in the line under the list, and a
+// click on it sends nothing. Pi, whose places magpie never saw, isn't on
+// a row that doesn't name it. The page draws what /api/library says
+// (hooksView and subagentsView list the stopped agents); this holds it to
+// that.
 const GREYED = {
   hooks: {
     lib: { hooks: [{ name: "notify", event: "turn-end", command: "notify-send done", agents: ["claude"] }], hookAgents: [{ id: "claude", file: `${HOME}/.claude/settings.json`, events: ["Stop"] }, { id: CX, no: "magpie gives hooks only to agents on this computer, not yet to Codex · WSL " + D + " in WSL", wsl: true }] },
     row: ".lib-hook", name: "notify",
     tip: "magpie gives hooks only to agents on this computer, not yet to {agent} in WSL",
     line: [".lib-hooks-no", "magpie can't give hooks to {agents} yet: their chips are greyed, and say why."],
+  },
+  subagents: {
+    lib: { subagents: [{ name: "reviewer", description: "Reviews a diff", prompt: "Review it.", skills: [], mcp: [], agents: ["claude"] }], subagentAgents: [{ id: "claude", dir: `${HOME}/.claude/agents`, skills: true, mcp: true }, { id: CX, no: "magpie gives no subagents to an agent in WSL yet", wsl: true }] },
+    row: ".lib-subagent", name: "reviewer",
+    tip: "magpie gives subagents only to agents on this computer, not yet to {agent} in WSL",
+    line: [".lib-subagents-no", "magpie can't give subagents to {agents} yet: their chips are greyed, and say why."],
   },
 };
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) for (const [tab, g] of Object.entries(GREYED)) {

@@ -3,6 +3,7 @@ package library
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -551,6 +552,67 @@ func TestWSLStoppedInstructionsUnseen(t *testing.T) {
 	}
 	if _, err := Takes("Codex · WSL "+distro, "instructions"); err == nil || !strings.Contains(err.Error(), "isn't running") {
 		t.Errorf("Takes of an unseen agent: %v", err)
+	}
+	if n := agent.FakeWSLRuns(distro); n != runs {
+		t.Errorf("%d commands ran in the stopped distro", n-runs)
+	}
+}
+
+// wslHookAgents are the Hooks page's agents in WSL, by id.
+func wslHookAgents(t *testing.T) map[string]HookAgentView {
+	t.Helper()
+	v, err := Read(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := map[string]HookAgentView{}
+	for _, a := range v.HookAgents {
+		if strings.Contains(a.ID, "@wsl:") {
+			m[a.ID] = a
+		}
+	}
+	return m
+}
+
+// #4237: the Hooks page left a stopped distro's agents out, where while
+// it runs it lists them greyed, saying magpie gives no agent in WSL hooks
+// yet. They are listed the same while it is stopped, by what magpie saw
+// there (their shape), and a hook given one says why, as while it runs.
+// There is nothing to write once the distro runs. Nothing of the distro
+// is opened or run while it is stopped (#3896).
+func TestWSLStoppedHooks(t *testing.T) {
+	const distro = "Ubuntu-24.04"
+	h := wslSandbox(t)
+	running := wslHookAgents(t)
+	if len(running) != 4 || running[wslCodex].No == "" || !running[wslCodex].WSL {
+		t.Fatalf("the WSL agents on the Hooks page while it runs: %+v", running)
+	}
+	agent.StopFakeWSL(distro)
+	root := filepath.Dir(filepath.Dir(h))
+	if err := os.Rename(root, root+".away"); err != nil {
+		t.Fatal(err)
+	}
+	runs := agent.FakeWSLRuns(distro)
+	if stopped := wslHookAgents(t); !reflect.DeepEqual(stopped, running) {
+		t.Errorf("the WSL agents on the Hooks page while it is stopped: %+v, while it ran: %+v", stopped, running)
+	}
+	l, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Hooks = append(l.Hooks, &Hook{Name: "notify", Event: "turn-end", Command: "notify-send done", Agents: []string{wslCodex}})
+	if err := l.save(); err != nil {
+		t.Fatal(err)
+	}
+	v, err := Read(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Hooks) != 1 || v.Hooks[0].Problems[wslCodex] != running[wslCodex].No {
+		t.Errorf("a hook given the stopped Codex: %+v", v.Hooks)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Errorf("something was written into the stopped distro: %v", err)
 	}
 	if n := agent.FakeWSLRuns(distro); n != runs {
 		t.Errorf("%d commands ran in the stopped distro", n-runs)

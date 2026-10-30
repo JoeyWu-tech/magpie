@@ -8,9 +8,9 @@
 // rows that name it, greyed out, kept by every click on the row, and a
 // click on it says why. One line under the list names the distro. Nothing
 // here starts WSL (#3896): the page only reads /api/library. The
-// Instructions page lists them the same way (#4182). Chromium and WebKit,
-// 1100px and 390px, in en, zh, zh-TW, ja and de. No backend: the API is
-// faked here.
+// Instructions page lists them the same way (#4182), and the Hooks page
+// as while the distro runs (#4237). Chromium and WebKit, 1100px and
+// 390px, in en, zh, zh-TW, ja and de. No backend: the API is faked here.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -59,7 +59,7 @@ function server(lang, state, posts) {
     if (url.pathname === "/boot.js") return route.fulfill({ contentType: "text/javascript", body: `window.bootPrefs = {lang:"${lang}",theme:"light",web:true};` });
     if (url.pathname === "/wails/runtime.js") return route.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
     if (url.pathname === "/api/state") return json({ agents: [], profiles: [], settings: { lang, theme: "light" } });
-    if (url.pathname === "/api/library") return json(lib(state.servers, state.instr));
+    if (url.pathname === "/api/library") return json({ ...lib(state.servers, state.instr), ...state.more });
     if (url.pathname === "/api/library/reveal") { (state.reveals ||= []).push(req.postDataJSON()); return json({}); }
     if (url.pathname.startsWith("/api/library/") && req.method() === "POST" && !url.pathname.includes("/check")) {
       const body = req.postDataJSON(), what = url.pathname.replace("/api/library/", "");
@@ -243,6 +243,63 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await sw("Claude Code").click();
         await page.waitForTimeout(300);
         assert.deepEqual(posts[1], { what: "instructions/save", body: { agents: [CX, PI] } });
+        assert.deepEqual(errors, []);
+        await ctx.close();
+      });
+    }
+  });
+}
+
+// #4237: the Hooks page lists the stopped distro's Codex as it does while
+// the distro runs: its chip greyed, saying magpie gives no agent in WSL
+// hooks yet, named in the line under the list, and a click on it sends
+// nothing. Pi, whose places magpie never saw, isn't on a row that doesn't
+// name it. The page draws what /api/library says (hooksView lists the
+// stopped agents); this holds it to that.
+const GREYED = {
+  hooks: {
+    lib: { hooks: [{ name: "notify", event: "turn-end", command: "notify-send done", agents: ["claude"] }], hookAgents: [{ id: "claude", file: `${HOME}/.claude/settings.json`, events: ["Stop"] }, { id: CX, no: "magpie gives hooks only to agents on this computer, not yet to Codex · WSL " + D + " in WSL", wsl: true }] },
+    row: ".lib-hook", name: "notify",
+    tip: "magpie gives hooks only to agents on this computer, not yet to {agent} in WSL",
+    line: [".lib-hooks-no", "magpie can't give hooks to {agents} yet: their chips are greyed, and say why."],
+  },
+};
+for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) for (const [tab, g] of Object.entries(GREYED)) {
+  test(engine + `: a stopped WSL distro's agents are on the ${tab} page, greyed as while it runs`, async (t) => {
+    assert(["chromium", "webkit"].includes(engine), "BROWSER must be chromium or webkit");
+    I18N = strings().I18N;
+    const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || "chromium" }));
+    t.after(() => browser.close());
+    for (const width of [1100, 390]) for (const lang of ["en", "zh", "zh-TW", "ja", "de"]) {
+      await t.test(`${lang} at ${width}px`, async () => {
+        const w = (key, vars) => tr(lang, key, vars);
+        const state = { servers: [], more: g.lib };
+        const posts = [], errors = [];
+        const ctx = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+        await ctx.addInitScript((tab) => { try { localStorage.setItem("magpie.libTab", tab); } catch {} }, tab);
+        const page = await ctx.newPage();
+        page.setDefaultTimeout(5000);
+        page.on("pageerror", (e) => errors.push(e.message));
+        page.on("dialog", (d) => { errors.push("a browser dialog: " + d.message()); d.dismiss(); });
+        await page.route("**/*", server(lang, state, posts));
+        await page.goto("http://magpie.test/");
+        await page.locator('button[data-view="library"]').click();
+        const v = page.locator("#view-library");
+        const row = v.locator(g.row).filter({ has: page.locator(".name", { hasText: new RegExp("^" + g.name) }) });
+        await row.waitFor();
+        assert.deepEqual(await row.locator(":scope > .lib-agents > .lib-ag[data-agent]").evaluateAll((cs) => cs.map((c) => c.dataset.agent)), ["claude", CX]);
+        const cx = row.locator(`.lib-ag[data-agent="${CX}"]`);
+        assert.match(await cx.getAttribute("class"), /\bblocked\b/);
+        assert.match(await cx.getAttribute("class"), /\basleep\b/);
+        assert.equal(await cx.getAttribute("aria-disabled"), "true");
+        assert.equal(await cx.getAttribute("aria-pressed"), "false");
+        assert.equal(await cx.getAttribute("title"), w(g.tip, { agent: "Codex · WSL " + D }));
+        assert.equal(await v.locator(g.line[0]).textContent(), w(g.line[1], { agents: "Codex · WSL " + D }));
+        assert.deepEqual(await sideways(page), [], "sideways with the rows");
+        await row.locator(":scope > .lib-agents").hover();
+        await cx.click({ force: true });
+        await page.waitForTimeout(200);
+        assert.deepEqual(posts, []);
         assert.deepEqual(errors, []);
         await ctx.close();
       });

@@ -126,7 +126,10 @@ func TestPiPackage(t *testing.T) {
 	defer cancel()
 
 	installPinnedPi(t, ctx)
-	abs, _ := filepath.Abs("testdata/pi")
+	abs := filepath.Join(Dir(), "fake-pi-package")
+	if err := os.CopyFS(abs, os.DirFS("testdata/pi")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Add(ctx, abs); err != nil {
 		t.Fatal(err)
 	}
@@ -248,6 +251,12 @@ func TestPiPackage(t *testing.T) {
 		}}},
 	})
 	s := r.seen(t)
+	// the extension's import reaches the pi the lock installed, not npm's
+	// latest that Bun installs for a folder with no node_modules above it
+	// (#2865)
+	if s["pi"] != pinnedPi {
+		t.Fatalf("the extension's import reached pi %v, not the %s the lock installed", s["pi"], pinnedPi)
+	}
 	if r.status != 200 || s["apiKey"] != "a-blue" || s["reasoning"] != "high" || s["maxTokens"] != 8000.0 || s["system"] != "be brief" ||
 		!slices.Equal(anys(s["tools"]), []string{"lookup"}) || !slices.Equal(anys(s["images"]), []string{"image/png"}) {
 		t.Fatalf("pi was handed %v (%d)", s, r.status)
@@ -411,7 +420,12 @@ func TestSearchFindsPiPackages(t *testing.T) {
 const pinnedPi = "1.2.0"
 
 // installPinnedPi installs testdata/pi-lock's pi into the plugins folder
-// with its lock frozen, as the folder would have it after ensurePi.
+// with its lock frozen, as the folder would have it after ensurePi. A
+// test's pi package is put in the plugins folder too, so pi and the
+// package's imports of it resolve to that pi: from a folder with no
+// node_modules above it, testdata/pi or a TempDir, Bun installs npm's
+// latest pi as the host starts (its auto-install), and the host waited
+// on npm for over 100 manifests and ran that pi, not this one (#2865).
 func installPinnedPi(t *testing.T, ctx context.Context) {
 	t.Helper()
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {
